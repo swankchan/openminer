@@ -1,0 +1,2231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenMiner™</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=2">
+    <link rel="alternate icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #667eea;
+            --primary-dark: #5568d3;
+            --secondary: #764ba2;
+            --accent-teal: #22c1c3;
+            --accent-coral: #ff6a88;
+            --accent-amber: #fbbf24;
+            --success: #10b981;
+            --error: #ef4444;
+            --warning: #f59e0b;
+            --bg-gradient: linear-gradient(
+                135deg,
+                #070a1f 0%,
+                #0b1232 22%,
+                #151a38 45%,
+                #0a1b24 70%,
+                #070a12 100%
+            );
+            --glass-bg: rgba(255, 255, 255, 0.1);
+            --glass-border: rgba(255, 255, 255, 0.2);
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-gradient);
+            background-size: 400% 400%;
+            animation: gradientShift 15s ease infinite;
+            min-height: 100vh;
+            padding: 12px;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        /* Subtle multi-color glow (kept tasteful) */
+        body::after {
+            content: '';
+            position: fixed;
+            inset: -20%;
+            background:
+                radial-gradient(700px 500px at 15% 25%, rgba(34, 193, 195, 0.28), transparent 60%),
+                radial-gradient(800px 560px at 85% 20%, rgba(255, 106, 136, 0.22), transparent 62%),
+                radial-gradient(900px 620px at 70% 85%, rgba(102, 126, 234, 0.22), transparent 60%),
+                radial-gradient(700px 520px at 20% 85%, rgba(251, 191, 36, 0.18), transparent 64%),
+                conic-gradient(from 210deg at 50% 50%, rgba(118, 75, 162, 0.08), rgba(34, 193, 195, 0.08), rgba(255, 106, 136, 0.08), rgba(102, 126, 234, 0.08), rgba(118, 75, 162, 0.08));
+            filter: blur(40px) saturate(1.2);
+            opacity: 0.85;
+            pointer-events: none;
+            z-index: 1;
+            mix-blend-mode: screen;
+            animation: glowFloat 14s ease-in-out infinite;
+        }
+
+        @keyframes glowFloat {
+            0% { transform: translate3d(0, 0, 0) scale(1); }
+            50% { transform: translate3d(2%, -1.5%, 0) scale(1.03); }
+            100% { transform: translate3d(0, 0, 0) scale(1); }
+        }
+
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        /* Starfield background */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                radial-gradient(2px 2px at 20% 30%, rgba(255, 255, 255, 0.8), transparent),
+                radial-gradient(2px 2px at 60% 70%, rgba(255, 255, 255, 0.6), transparent),
+                radial-gradient(1px 1px at 50% 50%, rgba(255, 255, 255, 0.9), transparent),
+                radial-gradient(1px 1px at 80% 10%, rgba(255, 255, 255, 0.7), transparent),
+                radial-gradient(2px 2px at 90% 40%, rgba(255, 255, 255, 0.5), transparent),
+                radial-gradient(1px 1px at 33% 60%, rgba(255, 255, 255, 0.8), transparent),
+                radial-gradient(2px 2px at 10% 80%, rgba(255, 255, 255, 0.6), transparent),
+                radial-gradient(1px 1px at 70% 90%, rgba(255, 255, 255, 0.7), transparent);
+            background-size: 200% 200%;
+            background-position: 0% 0%;
+            animation: starMove 20s linear infinite;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        @keyframes starMove {
+            0% { background-position: 0% 0%; }
+            100% { background-position: 100% 100%; }
+        }
+
+        .container {
+            max-width: 980px;
+            margin: 0 auto;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.92) 100%);
+            backdrop-filter: blur(20px);
+            border-radius: 24px;
+            box-shadow: 
+                0 20px 60px rgba(0, 0, 0, 0.3),
+                0 0 0 1px rgba(255, 255, 255, 0.5) inset;
+            padding: 18px;
+            position: relative;
+            z-index: 2;
+            animation: slideUp 0.6s ease-out;
+        }
+
+        /* Ensure form controls and textareas don't force horizontal scrolling */
+        input[type="text"], input[type="file"], select, textarea {
+            width: 100%;
+            max-width: 100%;
+            box-sizing: border-box;
+            word-break: break-word;
+            overflow-wrap: break-word;
+        }
+
+        .form-group {
+            display: block;
+            margin-bottom: 12px;
+        }
+
+        /* Responsive adjustments for smaller laptop screens (14" and similar) */
+        @media (max-width: 1366px) {
+            .container {
+                max-width: 920px;
+            }
+        }
+
+        @media (max-width: 1024px) {
+            .container {
+                margin: 8px;
+                padding: 12px;
+                border-radius: 12px;
+            }
+            .header .title {
+                font-size: 1.1rem;
+            }
+        }
+
+        /* Thin colorful border on glass card (more polished) */
+        .container::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 24px;
+            padding: 1px;
+            background: linear-gradient(
+                135deg,
+                rgba(34, 193, 195, 0.45) 0%,
+                rgba(102, 126, 234, 0.45) 35%,
+                rgba(255, 106, 136, 0.40) 70%,
+                rgba(251, 191, 36, 0.35) 100%
+            );
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            pointer-events: none;
+            opacity: 0.8;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 14px;
+        }
+
+        h1 {
+            background: linear-gradient(135deg, #667eea 0%, #22c1c3 35%, #ff6a88 70%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-size: 3em;
+            font-weight: 800;
+            margin-bottom: 15px;
+            letter-spacing: -1px;
+            animation: fadeInDown 0.8s ease-out;
+        }
+
+        .subtitle {
+            color: #64748b;
+            font-size: 0.9em;
+            font-weight: 400;
+            max-width: 920px;
+            margin: 0 auto;
+            line-height: 1.35;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            animation: fadeInDown 0.8s ease-out 0.2s both;
+        }
+
+        @keyframes fadeInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 14px;
+            background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 50%, #fef3f2 100%);
+            padding: 8px;
+            border-radius: 12px;
+            position: relative;
+        }
+
+        /* Desktop: make header a topbar (saves above-the-fold space) */
+        @media (min-width: 900px) {
+            .header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 18px;
+                text-align: left;
+                margin-bottom: 12px;
+            }
+
+            .logo {
+                margin-bottom: 0;
+            }
+
+            .subtitle {
+                margin: 0;
+                max-width: 560px;
+                text-align: right;
+                font-size: 0.85em;
+                line-height: 1.32;
+                padding: 10px 12px;
+                border-radius: 14px;
+                background: rgba(15, 23, 42, 0.04);
+                border: 1px solid rgba(15, 23, 42, 0.06);
+            }
+        }
+
+        .tab {
+            flex: 1;
+            padding: 10px 14px;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            font-size: 0.95em;
+            font-weight: 600;
+            color: #64748b;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border-radius: 8px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .tab:hover {
+            color: var(--primary);
+            transform: translateY(-2px);
+        }
+
+        .tab.active {
+            color: white;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent-teal) 45%, var(--secondary) 100%);
+            box-shadow: 0 10px 22px rgba(102, 126, 234, 0.28), 0 6px 14px rgba(34, 193, 195, 0.18);
+        }
+
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .upload-area {
+            border: 3px dashed rgba(102, 126, 234, 0.85);
+            border-radius: 20px;
+            padding: 26px 18px;
+            min-height: 150px;
+            text-align: center;
+            background:
+                radial-gradient(circle at 15% 20%, rgba(34, 193, 195, 0.10), transparent 50%),
+                radial-gradient(circle at 85% 25%, rgba(255, 106, 136, 0.10), transparent 55%),
+                linear-gradient(135deg, rgba(102, 126, 234, 0.06) 0%, rgba(118, 75, 162, 0.06) 100%);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .upload-area::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(102, 126, 234, 0.1) 0%, transparent 70%);
+            opacity: 0;
+            transition: opacity 0.4s;
+        }
+
+        .upload-area:hover::before {
+            opacity: 1;
+        }
+
+        .upload-bg-icon {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 6.5em;
+            color: rgba(102, 126, 234, 0.18);
+            z-index: 0;
+            pointer-events: none;
+            opacity: 0.65;
+        }
+
+        .upload-area:hover {
+            border-color: rgba(34, 193, 195, 0.95);
+            background:
+                radial-gradient(circle at 15% 20%, rgba(34, 193, 195, 0.14), transparent 52%),
+                radial-gradient(circle at 85% 25%, rgba(255, 106, 136, 0.12), transparent 55%),
+                linear-gradient(135deg, rgba(102, 126, 234, 0.10) 0%, rgba(118, 75, 162, 0.10) 100%);
+            transform: translateY(-5px);
+            box-shadow: 0 14px 40px rgba(102, 126, 234, 0.16), 0 10px 26px rgba(34, 193, 195, 0.12);
+        }
+
+        .upload-area.dragover {
+            border-color: rgba(255, 106, 136, 0.95);
+            background:
+                radial-gradient(circle at 20% 30%, rgba(255, 106, 136, 0.16), transparent 52%),
+                radial-gradient(circle at 80% 35%, rgba(34, 193, 195, 0.14), transparent 55%),
+                linear-gradient(135deg, rgba(102, 126, 234, 0.14) 0%, rgba(118, 75, 162, 0.14) 100%);
+            transform: scale(1.02);
+            box-shadow: 0 18px 52px rgba(255, 106, 136, 0.14), 0 14px 40px rgba(102, 126, 234, 0.18);
+        }
+
+        .upload-icon {
+            font-size: 3.2em;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent-teal) 40%, var(--accent-coral) 75%, var(--secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+            animation: bounce 2s ease-in-out infinite;
+            position: relative;
+            z-index: 1;
+        }
+
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+
+        .upload-text {
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #1e293b;
+            margin-bottom: 6px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .upload-hint {
+            color: #64748b;
+            font-size: 0.95em;
+            line-height: 1.6;
+            position: relative;
+            z-index: 1;
+        }
+
+        .upload-details {
+            margin-top: 12px;
+            padding: 12px 14px;
+            border-radius: 12px;
+            border: 2px solid #e2e8f0;
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            color: #475569;
+        }
+
+        .upload-details summary {
+            cursor: pointer;
+            font-weight: 600;
+            color: #334155;
+            list-style: none;
+        }
+
+        .upload-details summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .upload-details .upload-details-body {
+            margin-top: 10px;
+            font-size: 0.95em;
+            line-height: 1.75;
+            color: #64748b;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 10px;
+            color: #1e293b;
+            font-weight: 600;
+            font-size: 0.95em;
+        }
+
+        input[type="text"],
+        input[type="url"],
+        input[type="password"],
+        input[type="number"] {
+            width: 100%;
+            padding: 14px 18px;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            font-size: 1em;
+            transition: all 0.3s;
+            background: white;
+            font-family: inherit;
+        }
+
+        input[type="text"]:focus,
+        input[type="url"]:focus,
+        input[type="password"]:focus,
+        input[type="number"]:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            transform: translateY(-2px);
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            padding: 15px;
+            background: #f8fafc;
+            border-radius: 12px;
+            margin-top: 20px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .checkbox-group:hover {
+            background: #f1f5f9;
+            transform: translateX(5px);
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            margin-right: 12px;
+            cursor: pointer;
+            accent-color: var(--primary);
+        }
+
+        .btn {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent-teal) 40%, var(--secondary) 100%);
+            color: white;
+            border: none;
+            padding: 13px 28px;
+            border-radius: 12px;
+            font-size: 1.05em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            width: 100%;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 10px 26px rgba(102, 126, 234, 0.22), 0 6px 16px rgba(34, 193, 195, 0.14);
+        }
+
+        .btn::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+            transform: translate(-50%, -50%);
+            transition: width 0.6s, height 0.6s;
+        }
+
+        .btn:hover::before {
+            width: 300px;
+            height: 300px;
+        }
+
+        .btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 16px 42px rgba(102, 126, 234, 0.24), 0 10px 26px rgba(34, 193, 195, 0.16);
+        }
+
+        .btn:active {
+            transform: translateY(-1px);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn span {
+            position: relative;
+            z-index: 1;
+        }
+
+        .progress {
+            display: none;
+            margin-top: 30px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: #e2e8f0;
+            border-radius: 20px;
+            overflow: hidden;
+            position: relative;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary) 0%, var(--secondary) 50%, #f093fb 100%);
+            background-size: 200% 100%;
+            width: 0%;
+            transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            will-change: width;
+            overflow: hidden;
+        }
+
+        .progress-fill::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(
+                90deg,
+                transparent 0%,
+                rgba(255, 255, 255, 0.3) 50%,
+                transparent 100%
+            );
+            background-size: 200% 100%;
+            animation: flowWave 7s linear infinite;
+        }
+
+        @keyframes flowWave {
+            0% {
+                background-position: 200% 0;
+            }
+            100% {
+                background-position: -200% 0;
+            }
+        }
+
+        .progress-text {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 12px;
+            color: #334155;
+            font-weight: 600;
+            font-size: 0.95em;
+        }
+
+        .progress-text .progress-percent {
+            margin-left: auto;
+            color: #64748b;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+
+
+        .result {
+            display: none;
+            margin-top: 30px;
+            padding: 25px;
+            border-radius: 16px;
+            border-left: 5px solid;
+            animation: slideIn 0.4s ease-out;
+            backdrop-filter: blur(10px);
+            overflow-x: hidden;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .result.success {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(16, 185, 129, 0.05) 100%);
+            border-left-color: var(--success);
+            color: #065f46;
+        }
+
+        .result.error {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(239, 68, 68, 0.05) 100%);
+            border-left-color: var(--error);
+            color: #991b1b;
+        }
+
+        .result-title {
+            font-weight: 700;
+            margin-bottom: 12px;
+            font-size: 1.3em;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .result-content {
+            color: inherit;
+            margin-bottom: 15px;
+            line-height: 1.6;
+            opacity: 0.9;
+            overflow-x: hidden;
+            overflow-y: auto;
+            max-height: 60vh;
+            padding-right: 6px;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+        }
+
+        .download-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 10px;
+            transition: all 0.3s;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+
+        .download-link:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .file-info {
+            margin-top: 20px;
+            padding: 20px;
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            border-radius: 12px;
+            border: 2px solid #e2e8f0;
+            font-size: 0.95em;
+            color: #475569;
+            line-height: 1.8;
+            animation: fadeIn 0.3s;
+        }
+
+        .file-info strong {
+            color: #1e293b;
+            font-weight: 600;
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+
+            .container {
+                padding: 18px 14px;
+            }
+
+            h1 {
+                font-size: 2em;
+            }
+
+            .tabs {
+                flex-direction: column;
+            }
+
+            .upload-area {
+                padding: 22px 12px;
+                min-height: 140px;
+            }
+
+            .upload-icon {
+                font-size: 3.1em;
+            }
+
+            .logo {
+                gap: 12px;
+                margin-bottom: 10px;
+            }
+
+            .logo-svg {
+                width: 76px;
+                height: 76px;
+            }
+
+            .logo-text {
+                font-size: 1.9em;
+            }
+
+            .subtitle {
+                font-size: 0.92em;
+            }
+        }
+
+        /* Loading animation */
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .footer {
+            max-width: 1200px;
+            margin: 40px auto 0;
+            padding: 20px;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.9em;
+            position: relative;
+            z-index: 2;
+        }
+
+        .footer-text {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 15px 25px;
+            border-radius: 12px;
+            display: inline-block;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+
+        .logo-svg {
+            width: clamp(56px, 6vw, 72px);
+            height: clamp(56px, 6vw, 72px);
+            animation: logoFloat 3s ease-in-out infinite;
+            filter: drop-shadow(0 14px 26px rgba(102, 126, 234, 0.22)) drop-shadow(0 10px 18px rgba(34, 193, 195, 0.14));
+        }
+
+        @keyframes logoFloat {
+            0%, 100% {
+                transform: translateY(0) rotate(0deg);
+            }
+            50% {
+                transform: translateY(-8px) rotate(8deg);
+            }
+        }
+
+        .logo-text {
+            font-size: clamp(1.6em, 3.1vw, 2.05em);
+            font-weight: 800;
+            background: linear-gradient(135deg, #667eea 0%, #22c1c3 35%, #ff6a88 70%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -1px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">
+                <svg class="logo-svg" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" aria-label="OpenMiner app icon" role="img">
+                    <defs>
+                        <linearGradient id="omGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stop-color="#667eea"/>
+                            <stop offset="45%" stop-color="#22c1c3"/>
+                            <stop offset="100%" stop-color="#ff6a88"/>
+                        </linearGradient>
+                        <linearGradient id="omRing" x1="0%" y1="0%" x2="100%" y2="0%">
+                            <stop offset="0%" stop-color="rgba(102,126,234,0.9)"/>
+                            <stop offset="35%" stop-color="rgba(34,193,195,0.9)"/>
+                            <stop offset="70%" stop-color="rgba(255,106,136,0.9)"/>
+                            <stop offset="100%" stop-color="rgba(118,75,162,0.9)"/>
+                        </linearGradient>
+                        <filter id="omShadow" x="-20%" y="-20%" width="140%" height="140%">
+                            <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="rgba(15, 23, 42, 0.28)"/>
+                            <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="rgba(102, 126, 234, 0.18)"/>
+                        </filter>
+                        <filter id="omGlow" x="-30%" y="-30%" width="160%" height="160%">
+                            <feGaussianBlur stdDeviation="6" result="blur"/>
+                            <feMerge>
+                                <feMergeNode in="blur"/>
+                                <feMergeNode in="SourceGraphic"/>
+                            </feMerge>
+                        </filter>
+                    </defs>
+
+                    <!-- Outer badge ring (more prominent) -->
+                    <circle cx="60" cy="60" r="54" fill="rgba(102, 126, 234, 0.08)"/>
+                    <circle cx="60" cy="60" r="52" fill="none" stroke="url(#omRing)" stroke-width="3.2" opacity="0.9"/>
+
+                    <!-- App Tile -->
+                    <g filter="url(#omShadow)">
+                        <rect x="24" y="26" width="72" height="70" rx="18" fill="url(#omGrad)"/>
+                        <rect x="28" y="30" width="64" height="62" rx="16" fill="rgba(255,255,255,0.14)"/>
+                    </g>
+
+                    <!-- Document (high contrast) -->
+                    <g>
+                        <path d="M44 40h22l10 10v30a8 8 0 0 1-8 8H44a8 8 0 0 1-8-8V48a8 8 0 0 1 8-8z" fill="rgba(255,255,255,0.92)"/>
+                        <path d="M66 40v10a4 4 0 0 0 4 4h10" fill="rgba(15,23,42,0.08)"/>
+                        <!-- Document lines -->
+                        <g stroke="rgba(15,23,42,0.35)" stroke-width="2.6" stroke-linecap="round">
+                            <line x1="42" y1="58" x2="76" y2="58"/>
+                            <line x1="42" y1="68" x2="72" y2="68"/>
+                            <line x1="42" y1="78" x2="66" y2="78"/>
+                        </g>
+                    </g>
+
+                    <!-- Pickaxe (dark outline + highlight, stays crisp when small) -->
+                    <g transform="translate(76, 34) rotate(-12)" filter="url(#omGlow)">
+                        <path d="M0 0 L0 28" stroke="#0b1024" stroke-width="5.2" stroke-linecap="round"/>
+                        <path d="M0 0 L0 28" stroke="rgba(255,255,255,0.55)" stroke-width="1.6" stroke-linecap="round"/>
+                        <path d="M0 26 L-14 36 L-10 42 L0 34 Z" fill="#0b1024"/>
+                        <path d="M0 26 L14 36 L10 42 L0 34 Z" fill="#0b1024"/>
+                        <circle cx="-4" cy="30" r="2.3" fill="rgba(255,255,255,0.9)"/>
+                        <circle cx="4" cy="30" r="2.3" fill="rgba(255,255,255,0.9)"/>
+                    </g>
+
+                    <!-- Spark (more visible, subtle flicker) -->
+                    <g filter="url(#omGlow)">
+                        <path d="M88 56 l3 6 l6 3 l-6 3 l-3 6 l-3-6 l-6-3 l6-3 z" fill="rgba(255,106,136,0.95)">
+                            <animate attributeName="opacity" values="0.95;0.35;0.95" dur="1.6s" repeatCount="indefinite"/>
+                        </path>
+                        <circle cx="82" cy="62" r="2.2" fill="rgba(34,193,195,0.95)">
+                            <animate attributeName="r" values="2.2;3.4;2.2" dur="1.9s" repeatCount="indefinite"/>
+                            <animate attributeName="opacity" values="0.95;0.35;0.95" dur="1.9s" repeatCount="indefinite"/>
+                        </circle>
+                    </g>
+                </svg>
+                <span class="logo-text">OpenMiner™</span>
+            </div>
+            <p class="subtitle" id="runtimeSubtitle">Loading runtime status…</p>
+        </div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('upload')">
+                <i class="fas fa-upload"></i> Upload
+            </button>
+            <button class="tab" onclick="switchTab('sharepoint')">
+                <i class="fas fa-cloud"></i> SharePoint
+            </button>
+            <button class="tab" onclick="switchTab('folder')">
+                <i class="fas fa-folder"></i> Windows Folder
+            </button>
+        </div>
+
+        <!-- Upload tab -->
+        <div id="upload-tab" class="tab-content active">
+            <div class="upload-area" id="uploadArea" onclick="openFilePicker()">
+                <i class="fas fa-file-pdf upload-bg-icon"></i>
+                <div class="upload-icon">
+                    <i class="fas fa-cloud-upload-alt"></i>
+                </div>
+                <div class="upload-text">Click or drag &amp; drop files here</div>
+                <div class="upload-hint">Supports PDF or JSON (multi-select / batch)</div>
+            </div>
+            <div style="display:flex; gap:10px; margin-top: 10px;">
+                <button class="btn" type="button" onclick="openFilePicker()" style="flex:1; padding: 12px 14px;">
+                    <span><i class="fas fa-file-arrow-up"></i> Choose files (multi-select)</span>
+                </button>
+                <button class="btn" type="button" onclick="openFolderPicker()" style="flex:1; padding: 12px 14px;">
+                    <span><i class="fas fa-folder-open"></i> Choose folder</span>
+                </button>
+            </div>
+
+            <details class="upload-details">
+                <summary><i class="fas fa-lightbulb"></i> Tips (click to expand)</summary>
+                <div class="upload-details-body">
+                    <div><i class="fas fa-file-pdf"></i> PDF upload: run OCR (MinerU) → then ask AI to generate JSON</div>
+                    <div><i class="fas fa-brackets-curly"></i> JSON upload: skip MinerU and directly ask AI to generate JSON</div>
+                    <div><i class="fas fa-folder-open"></i> Folder choose/drag-drop: best supported in Chrome / Edge</div>
+                </div>
+            </details>
+
+            <!-- NOTE: Avoid display:none; some browsers ignore programmatic click() on hidden file inputs. -->
+            <input type="file" id="fileInput" accept=".pdf,.json" multiple style="position:absolute; left:-10000px; width:1px; height:1px; opacity:0;" />
+            <input type="file" id="folderInput" accept=".pdf,.json" webkitdirectory directory multiple style="position:absolute; left:-10000px; width:1px; height:1px; opacity:0;" />
+            <div class="file-info" id="fileInfo" style="display: none;"></div>
+            <!-- CSV options removed: outputs are JSON only -->
+            <div class="form-group">
+                <label for="systemPromptInput">System Prompt (optional, overrides default)</label>
+                <textarea id="systemPromptInput" rows="3" style="min-height:72px; width:100%;" placeholder="Leave blank to use defaults or .env settings"></textarea>
+            </div>
+            <div class="form-group">
+                <label for="userPromptInput">User Prompt (optional, overrides default)</label>
+                <textarea id="userPromptInput" rows="3" style="min-height:72px; width:100%;" placeholder="Leave blank to use defaults or .env settings"></textarea>
+            </div>
+            <button class="btn" onclick="uploadFile()" id="uploadBtn" disabled>
+                <span><i class="fas fa-magic"></i> Process</span>
+            </button>
+        </div>
+
+        <!-- SharePoint tab -->
+        <div id="sharepoint-tab" class="tab-content">
+            <details class="upload-details" style="margin-top: 0;">
+                <summary><i class="fas fa-gear"></i> SharePoint connection settings</summary>
+                <div class="upload-details-body">
+                    <div class="form-group">
+                        <label for="spClientId"><i class="fas fa-id-badge"></i> Client ID</label>
+                        <input type="text" id="spClientId" placeholder="Azure AD App (client) ID" />
+                    </div>
+                    <div class="form-group">
+                        <label for="spTenant"><i class="fas fa-building"></i> Tenant</label>
+                        <input type="text" id="spTenant" placeholder="Tenant ID (GUID) or name" />
+                    </div>
+                    <div class="form-group">
+                        <label for="spSecret"><i class="fas fa-key"></i> Secret <span id="spSecretStatus" style="font-weight:600; opacity:.8;"></span></label>
+                        <input type="password" id="spSecret" placeholder="Paste the client secret VALUE here (leave blank to keep current)" autocomplete="new-password" />
+                        <div style="font-size: 12px; opacity: 0.8; margin-top: 6px;">
+                            Secret is write-only for safety. Leave blank to keep the current value.
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="spLink"><i class="fas fa-link"></i> Site/Library Link (reference)</label>
+                        <input type="text" id="spLink" placeholder="e.g.: https://tenant.sharepoint.com/sites/SiteName/Shared Documents/Forms/AllItems.aspx" />
+                        <div style="font-size: 12px; opacity: 0.8; margin-top: 6px;">
+                            This is not the file to process. It helps derive the SharePoint site URL.
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="spDefaultFolder"><i class="fas fa-folder"></i> Default folder</label>
+                        <input type="text" id="spDefaultFolder" placeholder="e.g.: /sites/SiteName/Shared Documents/Invoices" />
+                    </div>
+                    <div class="form-group">
+                        <label for="spPollInterval"><i class="fas fa-clock"></i> Poll interval (seconds)</label>
+                        <input type="number" id="spPollInterval" min="1" step="1" placeholder="60" />
+                    </div>
+                    <div style="display:flex; gap:10px;">
+                        <button class="btn" type="button" onclick="loadSharePointSettings()" style="flex:1; padding: 12px 14px;">
+                            <span><i class="fas fa-rotate"></i> Reload settings</span>
+                        </button>
+                        <button class="btn" type="button" onclick="saveSharePointSettings()" style="flex:1; padding: 12px 14px;">
+                            <span><i class="fas fa-floppy-disk"></i> Save settings</span>
+                        </button>
+                        <button class="btn" type="button" onclick="validateSharePointSettings()" style="flex:1; padding: 12px 14px;">
+                            <span><i class="fas fa-circle-check"></i> Validate</span>
+                        </button>
+                    </div>
+                    <div id="spValidateStatusBox" style="display:none; margin-top:10px; padding:10px 12px; border-radius:12px; font-size:13px;"></div>
+                </div>
+            </details>
+
+            <div class="form-group">
+                <label for="sharepointUrl"><i class="fas fa-file"></i> File to process (URL or server-relative path)</label>
+                <input type="text" id="sharepointUrl" placeholder="e.g.: /sites/APOCR/Shared Documents/Invoices/file.pdf (or full file URL)" />
+            </div>
+            <div class="form-group">
+                <label for="sharepointFolder"><i class="fas fa-folder-open"></i> Folder path (optional)</label>
+                <input type="text" id="sharepointFolder" placeholder="e.g.: /Shared Documents" />
+            </div>
+
+            <details class="upload-details" style="margin-top: 10px;">
+                <summary><i class="fas fa-folder-tree"></i> Browse SharePoint folder</summary>
+                <div class="upload-details-body">
+                    <div style="display:flex; gap:10px; align-items:center;">
+                        <div style="flex:1; font-size: 12px; opacity: .85; overflow:hidden; text-overflow: ellipsis; white-space: nowrap;" title="Current folder">
+                            Current: <span id="spBrowsePath" style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;"></span>
+                        </div>
+                        <button class="btn" type="button" onclick="browseSharePointUp()" style="padding: 10px 12px; min-width: 92px;">
+                            <span><i class="fas fa-arrow-up"></i> Up</span>
+                        </button>
+                        <button class="btn" type="button" onclick="browseSharePoint()" style="padding: 10px 12px; min-width: 110px;">
+                            <span><i class="fas fa-rotate"></i> Refresh</span>
+                        </button>
+                    </div>
+                    <div id="spBrowseList" style="margin-top: 10px;"></div>
+                    <div style="font-size: 12px; opacity: 0.8; margin-top: 8px;">
+                        Tip: click a PDF to auto-fill the “File to process” field.
+                    </div>
+                </div>
+            </details>
+
+            <details class="upload-details" style="margin-top: 10px;">
+                <summary><i class="fas fa-sitemap"></i> Folder structure (tree)</summary>
+                <div class="upload-details-body">
+                    <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
+                        <div class="form-group" style="flex:2; min-width: 260px; margin:0;">
+                            <label for="spTreePath"><i class="fas fa-folder"></i> Path</label>
+                            <input type="text" id="spTreePath" placeholder="Defaults to current browse path" />
+                        </div>
+                        <div class="form-group" style="width:120px; margin:0;">
+                            <label for="spTreeDepth"><i class="fas fa-layer-group"></i> Depth</label>
+                            <input type="number" id="spTreeDepth" min="0" max="25" step="1" value="4" />
+                        </div>
+                        <div class="form-group" style="width:150px; margin:0;">
+                            <label for="spTreeMaxNodes"><i class="fas fa-gauge"></i> Max nodes</label>
+                            <input type="number" id="spTreeMaxNodes" min="50" max="20000" step="50" value="1500" />
+                        </div>
+                        <div class="form-group" style="display:flex; align-items:center; gap:8px; margin:0; padding-bottom: 6px;">
+                            <input type="checkbox" id="spTreeIncludeFiles" />
+                            <label for="spTreeIncludeFiles" style="margin:0;"><i class="fas fa-file"></i> Include files</label>
+                        </div>
+                        <button class="btn" type="button" onclick="loadSharePointTree()" style="padding: 10px 12px; min-width: 140px;">
+                            <span><i class="fas fa-diagram-project"></i> Load tree</span>
+                        </button>
+                        <button class="btn" type="button" onclick="useBrowsePathForTree()" style="padding: 10px 12px; min-width: 140px;">
+                            <span><i class="fas fa-location-crosshairs"></i> Use current</span>
+                        </button>
+                    </div>
+                    <div id="spTreeStatus" style="margin-top:10px; display:none; padding:10px 12px; border-radius:12px; font-size:13px;"></div>
+                    <pre id="spTreeOutput" style="margin-top:10px; max-height: 420px; overflow:auto; white-space: pre; background: rgba(255,255,255,0.55); padding: 12px; border-radius: 12px; font-size: 12px;"></pre>
+                    <div style="font-size: 12px; opacity: 0.8; margin-top: 8px;">
+                        Tip: depth 3–5 is usually enough. Increase max nodes only if needed.
+                    </div>
+                </div>
+            </details>
+
+            <button class="btn" onclick="processSharePoint()">
+                <span><i class="fas fa-cloud-download-alt"></i> Process SharePoint PDF</span>
+            </button>
+        </div>
+
+        <!-- Windows folder tab -->
+        <div id="folder-tab" class="tab-content">
+            <div class="form-group">
+                <label for="folderPath"><i class="fas fa-folder"></i> Windows folder path</label>
+                <input type="text" id="folderPath" placeholder="e.g.: C:\Documents\PDFs" />
+            </div>
+            <button class="btn" onclick="processFolder()">
+                <span><i class="fas fa-tasks"></i> Process all PDFs in the folder</span>
+            </button>
+        </div>
+
+        <!-- Progress bar -->
+        <div class="progress" id="progress">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="progress-text" id="progressText">
+                <span id="progressLabel">Ready</span>
+                <span class="progress-percent" id="progressPercent">0%</span>
+            </div>
+        </div>
+
+        <!-- Results -->
+        <div class="result" id="result"></div>
+    </div>
+
+    <footer class="footer">
+        <div class="footer-text">
+            OpenMiner™ &copy; 2026 • Built with <i class="fas fa-heart" style="color:#ef4444;"></i> by HK IT Startup Company<br>
+        </div>
+    </footer>
+
+    <script>
+        let selectedFiles = [];
+        let ws = null;
+        let currentTaskId = null;
+        let currentProgress = 0;
+        let targetProgress = 0;
+        let isAnimating = false;
+
+        function getFileDisplayPath(file) {
+            // folder drag-drop: we attach a best-effort relative path to File objects
+            // (File is extensible in JS; browsers keep it as an object)
+            return (file && (file._relativePath || file.webkitRelativePath || file.name)) ? (file._relativePath || file.webkitRelativePath || file.name) : '';
+        }
+
+        function isSupportedUploadFile(file) {
+            const name = getFileDisplayPath(file).toLowerCase();
+            return name.endsWith('.pdf') || name.endsWith('.json');
+        }
+
+        function openFilePicker() {
+            const input = document.getElementById('fileInput');
+            if (!input) return;
+            input.click();
+        }
+
+        function openFolderPicker() {
+            const input = document.getElementById('folderInput');
+            if (!input) return;
+
+            // Best-effort feature hint. If unsupported, clicking may do nothing.
+            const supportsDirectory = input.hasAttribute('webkitdirectory') || input.hasAttribute('directory');
+            if (!supportsDirectory) {
+                showResult('error', '<i class="fas fa-exclamation-circle"></i> Your browser may not support folder upload. Please use Chrome / Edge.');
+                return;
+            }
+
+            input.click();
+        }
+
+        function getUploadFileMeta(file) {
+            const fileName = getFileDisplayPath(file);
+            const lower = fileName.toLowerCase();
+            const ext = lower.split('.').pop();
+            const isJSON = ext === 'json';
+            const parts = fileName.split('/').filter(Boolean);
+            const displayName = parts.length ? parts[parts.length - 1] : fileName;
+            const displayPath = parts.length > 1 ? parts.slice(0, -1).join('/') + '/' : '';
+            return {
+                fileName,
+                displayName,
+                displayPath,
+                ext,
+                fileType: isJSON ? 'JSON' : 'PDF',
+                fileTypeIcon: isJSON ? 'fa-file-code' : 'fa-file-pdf',
+                fileTypeColor: isJSON ? '#10b981' : '#667eea',
+                fileTypeInfo: isJSON
+                    ? '<span style="color: #10b981;"><i class="fas fa-check-circle"></i> JSON file (MinerU OCR will be skipped)</span>'
+                    : '<span style="color: #667eea;"><i class="fas fa-check-circle"></i> PDF file (OCR will run)</span>',
+            };
+        }
+
+        function updateUploadButtonState() {
+            const uploadBtn = document.getElementById('uploadBtn');
+            if (!uploadBtn) return;
+            const n = selectedFiles.length;
+            uploadBtn.disabled = n === 0;
+            uploadBtn.querySelector('span').innerHTML = n <= 1
+                ? '<i class="fas fa-magic"></i> Process'
+                : `<i class="fas fa-layer-group"></i> Batch process (${n} files)`;
+        }
+
+        function renderSelectedFilesInfo() {
+            const fileInfo = document.getElementById('fileInfo');
+            if (!fileInfo) return;
+
+            if (!selectedFiles.length) {
+                fileInfo.style.display = 'none';
+                fileInfo.innerHTML = '';
+                return;
+            }
+
+            fileInfo.style.display = 'block';
+
+            if (selectedFiles.length === 1) {
+                const f = selectedFiles[0];
+                const meta = getUploadFileMeta(f);
+                fileInfo.innerHTML = `
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                        <i class="fas ${meta.fileTypeIcon}" style="font-size: 1.5em; color: ${meta.fileTypeColor};"></i>
+                        <div>
+                            <strong>Selected:</strong> ${meta.displayName}<br>
+                            ${meta.displayPath ? `<strong>Source path:</strong> ${meta.displayPath}<br>` : ''}
+                            <strong>Type:</strong> ${meta.fileType}<br>
+                            <strong>Size:</strong> ${(f.size / 1024 / 1024).toFixed(2)} MB
+                        </div>
+                    </div>
+                    ${meta.fileTypeInfo}
+                `;
+                return;
+            }
+
+            const totalMB = selectedFiles.reduce((sum, f) => sum + (f.size || 0), 0) / 1024 / 1024;
+            const listHtml = selectedFiles.slice(0, 12).map((f, idx) => {
+                const meta = getUploadFileMeta(f);
+                return `
+                    <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:10px; background: rgba(255,255,255,0.55); margin-top:8px;">
+                        <div style="width:24px; text-align:center; color:#64748b; font-weight:700;">${idx + 1}</div>
+                        <i class="fas ${meta.fileTypeIcon}" style="color:${meta.fileTypeColor};"></i>
+                        <div style="flex:1; min-width:0;">
+                            <div style="font-weight:600; color:#0f172a; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${meta.displayName}</div>
+                            <div style="font-size:12px; color:#64748b; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${meta.displayPath || ''}${meta.fileType}｜${(f.size / 1024 / 1024).toFixed(2)} MB</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            const more = selectedFiles.length > 12 ? `<div style="margin-top:10px; color:#64748b; font-size:12px;">(+ ${selectedFiles.length - 12} more not shown)</div>` : '';
+
+            fileInfo.innerHTML = `
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+                    <i class="fas fa-layer-group" style="font-size: 1.5em; color: #667eea;"></i>
+                    <div>
+                        <strong>Selected:</strong> ${selectedFiles.length} files<br>
+                        <strong>Total size:</strong> ${totalMB.toFixed(2)} MB<br>
+                        <span style="color:#64748b; font-size:12px;">(Uploaded and processed sequentially)</span>
+                    </div>
+                </div>
+                ${listHtml}
+                ${more}
+            `;
+        }
+
+        function setSelectedFiles(files) {
+            const filtered = Array.from(files || []).filter(isSupportedUploadFile);
+            selectedFiles = filtered;
+            renderSelectedFilesInfo();
+            updateUploadButtonState();
+        }
+
+        function resetProgressBar() {
+            currentProgress = 0;
+            targetProgress = 0;
+            isAnimating = false;
+            const progressFill = document.getElementById('progressFill');
+            if (progressFill) progressFill.style.width = '0%';
+            const progressPercent = document.getElementById('progressPercent');
+            if (progressPercent) progressPercent.textContent = '0%';
+        }
+
+        async function refreshRuntimeSubtitle() {
+            const el = document.getElementById('runtimeSubtitle');
+            if (!el) return;
+
+            try {
+                const resp = await fetch('/api/runtime_status', { cache: 'no-store' });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const data = await resp.json();
+
+                const mineru = data?.mineru || {};
+                const csv = data?.csv || {};
+                const ai = data?.ai || {};
+
+                const mineruEngine = mineru.effective_engine === 'vllm-async-engine' ? 'vLLM' : 'CLI';
+                const mineruParts = [
+                    `MinerU: ${mineruEngine}`,
+                    mineru.mineru_method ? `mode=${mineru.mineru_method}` : null,
+                    mineru.output_source ? `output=${mineru.output_source}` : null,
+                ].filter(Boolean).join(' (') + (mineru.mineru_method || mineru.output_source ? ')' : '');
+
+                let csvLabel = 'CSV: ';
+                if (csv.effective_method === 'program_csv') csvLabel += 'Program CSV';
+                else if (csv.effective_method === 'mineru_csv') csvLabel += 'MinerU direct';
+                else csvLabel += 'AI generated';
+
+                let aiLabel = '';
+                if (csv.effective_method === 'azure_openai_csv') {
+                    const model = ai.azure_deployment ? `, model=${ai.azure_deployment}` : '';
+                    const t = (ai.temperature !== undefined && ai.temperature !== null) ? `, T=${ai.temperature}` : '';
+                    aiLabel = ` | AI: Azure OpenAI${model}${t}`;
+                } else if (ai.service === 'ollama') {
+                    const model = ai.ollama_model ? `, model=${ai.ollama_model}` : '';
+                    const t = (ai.temperature !== undefined && ai.temperature !== null) ? `, T=${ai.temperature}` : '';
+                    aiLabel = ` | AI: Ollama${model}${t}`;
+                } else if (csv.effective_method === 'mineru_csv' || csv.effective_method === 'program_csv') {
+                    aiLabel = '';
+                }
+
+                const notes = [];
+                if (mineru.forced_cli) notes.push('vLLM disabled (JSON output requires CLI)');
+                else if (mineru.use_vllm_async && !mineru.vllm_available) notes.push('vLLM unavailable; falling back to CLI');
+                if (csv.fallback) notes.push('AI not initialized; falling back to MinerU direct');
+
+                const noteText = notes.length ? ` (${notes.join('; ')})` : '';
+                el.textContent = `${mineruParts} | ${csvLabel}${aiLabel}${noteText}`;
+            } catch (e) {
+                // Fallback copy (avoid blank)
+                el.textContent = 'Smart PDF processing with MinerU and AI';
+            }
+        }
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+
+            document.getElementById(tabName + '-tab').classList.add('active');
+            event.target.closest('.tab').classList.add('active');
+
+            if (tabName === 'sharepoint') {
+                // Best-effort: load settings when opening the SharePoint tab.
+                loadSharePointSettings().catch(() => {});
+            }
+        }
+
+        // File selection handling
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            setSelectedFiles(e.target.files);
+            if (!selectedFiles.length && (e.target.files || []).length) {
+                showResult('error', '<i class="fas fa-exclamation-circle"></i> Unsupported file type. Please upload PDF or JSON.');
+            }
+        });
+
+        // Folder selection handling (Chrome/Edge support webkitdirectory)
+        document.getElementById('folderInput').addEventListener('change', function(e) {
+            setSelectedFiles(e.target.files);
+            if (!selectedFiles.length && (e.target.files || []).length) {
+                showResult('error', '<i class="fas fa-exclamation-circle"></i> No PDF/JSON found in this folder.');
+            }
+        });
+
+        // Update subtitle on load (reflect backend runtime status)
+        document.addEventListener('DOMContentLoaded', () => {
+            refreshRuntimeSubtitle();
+        });
+
+        // Drag & drop handling
+        const uploadArea = document.getElementById('uploadArea');
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        async function readEntriesAsync(reader) {
+            return new Promise((resolve) => {
+                reader.readEntries((entries) => resolve(entries || []));
+            });
+        }
+
+        async function traverseEntry(entry, pathPrefix) {
+            if (!entry) return [];
+
+            if (entry.isFile) {
+                return new Promise((resolve) => {
+                    entry.file(
+                        (file) => {
+                            try {
+                                file._relativePath = (pathPrefix || '') + file.name;
+                            } catch (_) {
+                                // ignore; still usable via file.name
+                            }
+                            resolve([file]);
+                        },
+                        () => resolve([])
+                    );
+                });
+            }
+
+            if (entry.isDirectory) {
+                const reader = entry.createReader();
+                const dirPrefix = (pathPrefix || '') + entry.name + '/';
+                let all = [];
+                while (true) {
+                    const batch = await readEntriesAsync(reader);
+                    if (!batch.length) break;
+                    for (const child of batch) {
+                        const childFiles = await traverseEntry(child, dirPrefix);
+                        all = all.concat(childFiles);
+                    }
+                }
+                return all;
+            }
+
+            return [];
+        }
+
+        async function collectDroppedFiles(dataTransfer) {
+            // Some browsers include only a folder "placeholder" in dataTransfer.files.
+            // Use webkitGetAsEntry() to recursively collect files.
+            const items = dataTransfer?.items ? Array.from(dataTransfer.items) : [];
+            const entries = [];
+            for (const item of items) {
+                const entry = item?.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+                if (entry) entries.push(entry);
+            }
+
+            if (!entries.length) {
+                return Array.from(dataTransfer?.files || []);
+            }
+
+            let all = [];
+            for (const entry of entries) {
+                const prefix = '';
+                const files = await traverseEntry(entry, prefix);
+                all = all.concat(files);
+            }
+
+            // De-dupe by (relativePath/name, size, lastModified)
+            const seen = new Set();
+            const deduped = [];
+            for (const f of all) {
+                const key = `${getFileDisplayPath(f)}|${f.size}|${f.lastModified}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                deduped.push(f);
+            }
+            return deduped;
+        }
+
+        uploadArea.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+
+            const dt = e.dataTransfer;
+            const files = await collectDroppedFiles(dt);
+            if (!files.length) {
+                showResult('error', '<i class="fas fa-exclamation-circle"></i> Could not read dropped items. Try the “Choose folder” button instead.');
+                return;
+            }
+
+            const supported = files.filter(isSupportedUploadFile);
+            if (!supported.length) {
+                showResult('error', '<i class="fas fa-exclamation-circle"></i> Unsupported file type. Please upload PDF or JSON.');
+                return;
+            }
+
+            // Sync into the hidden file input (best-effort; used only for consistency)
+            try {
+                const dataTransfer = new DataTransfer();
+                supported.forEach(f => dataTransfer.items.add(f));
+                const fileInput = document.getElementById('fileInput');
+                if (fileInput) fileInput.files = dataTransfer.files;
+                setSelectedFiles(dataTransfer.files);
+            } catch (err) {
+                // If browser blocks programmatic assignment, still proceed with our internal list.
+                setSelectedFiles(supported);
+            }
+        });
+
+        function renderBatchResult(batchItems, headline) {
+            const okCount = batchItems.filter(x => x.status === 'success').length;
+            const failCount = batchItems.filter(x => x.status === 'error').length;
+            const total = batchItems.length;
+
+            let content = `<div class="result-title">${headline || `<i class=\"fas fa-layer-group\"></i> Batch: ${okCount}/${total} succeeded, ${failCount} failed`}</div>`;
+            content += `<div class="result-content" style="margin-top:10px;">`;
+            batchItems.forEach((item, idx) => {
+                const badgeColor = item.status === 'success' ? '#10b981' : (item.status === 'error' ? '#ef4444' : (item.status === 'processing' ? '#667eea' : '#94a3b8'));
+                const badgeText = item.status === 'success' ? 'Done' : (item.status === 'error' ? 'Failed' : (item.status === 'processing' ? 'Processing' : 'Pending'));
+                content += `
+                    <div style="margin-top: 10px; padding: 12px; background: rgba(255, 255, 255, 0.5); border-radius: 10px;">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <div style="width:24px; text-align:center; color:#64748b; font-weight:700;">${idx + 1}</div>
+                            <i class="fas ${item.icon}" style="color:${item.color};"></i>
+                            <div style="flex:1; min-width:0;">
+                                <div style="font-weight:600; color:#0f172a; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${item.displayName || item.name}</div>
+                                <div style="font-size:12px; color:#64748b; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${item.displayPath || ''}${item.kind}｜${item.sizeMB} MB</div>
+                            </div>
+                            <div style="font-size:12px; font-weight:700; color:${badgeColor};">${badgeText}</div>
+                        </div>
+                        ${item.download_url ? `
+                            <div style=\"margin-top: 10px;\">
+                                <a href=\"${item.download_url}\" class=\"download-link\">
+                                    <i class=\"fas fa-download\"></i> Download JSON
+                                </a>
+                            </div>
+                        ` : ''}
+                        ${item.error ? `<div style="margin-top:8px; color:#b91c1c; font-size:12px;">${item.error}</div>` : ''}
+                    </div>
+                `;
+            });
+            content += `</div>`;
+
+            showResult('success', content);
+        }
+
+        async function uploadSingleFile(file, systemPrompt, userPrompt, batchPrefix) {
+            const formData = new FormData();
+            formData.append('file', file);
+            if (systemPrompt && systemPrompt.trim().length > 0) formData.append('system_prompt', systemPrompt);
+            if (userPrompt && userPrompt.trim().length > 0) formData.append('user_prompt', userPrompt);
+
+            currentTaskId = generateTaskId();
+            formData.append('task_id', currentTaskId);
+
+            try {
+                resetProgressBar();
+                updateProgress(0, `${batchPrefix || ''}Connecting…`);
+                try {
+                    await connectWebSocket(currentTaskId);
+                } catch (wsError) {
+                    console.warn('[Upload] WebSocket connection failed; continuing upload:', wsError);
+                }
+
+                updateProgress(5, `${batchPrefix || ''}Uploading…`);
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                let data = null;
+                try {
+                    data = await response.json();
+                } catch {
+                    data = null;
+                }
+
+                if (ws) {
+                    ws.close();
+                    ws = null;
+                }
+
+                return { ok: response.ok, status: response.status, data };
+            } catch (error) {
+                if (ws) {
+                    ws.close();
+                    ws = null;
+                }
+                return { ok: false, status: 0, data: { detail: error?.message || String(error) } };
+            }
+        }
+
+        async function uploadFile() {
+            if (!selectedFiles || selectedFiles.length === 0) {
+                showResult('error', '<i class="fas fa-exclamation-circle"></i> Please choose files first.');
+                return;
+            }
+
+            // The UI no longer offers CSV options; the API returns JSON only.
+            const systemPrompt = document.getElementById('systemPromptInput').value;
+            const userPrompt = document.getElementById('userPromptInput').value;
+
+            // Hide button and show progress bar
+            const uploadBtn = document.getElementById('uploadBtn');
+            uploadBtn.style.display = 'none';
+            uploadBtn.disabled = true;
+            showProgress(true);
+            hideResult();
+
+            try {
+                if (selectedFiles.length === 1) {
+                    const file = selectedFiles[0];
+                    const result = await uploadSingleFile(file, systemPrompt, userPrompt, '');
+
+                    if (result.ok) {
+                        const data = result.data || {};
+                        let message = '<i class="fas fa-check-circle"></i> Completed successfully!';
+                        if (data.file_type === 'json') {
+                            message += ' (JSON file skipped MinerU OCR)';
+                        } else if (data.needs_ocr) {
+                            message += ' (OCR completed)';
+                        } else {
+                            message += ' (Text extracted directly; no OCR needed)';
+                        }
+                        showResult('success', message, data);
+                    } else {
+                        const data = result.data || {};
+                        showResult('error', '<i class="fas fa-times-circle"></i> ' + (data.detail || 'Processing failed'));
+                    }
+                    return;
+                }
+
+                // Batch mode
+                const batchItems = selectedFiles.map(f => {
+                    const meta = getUploadFileMeta(f);
+                    return {
+                        file: f,
+                        name: meta.fileName,
+                        displayName: meta.displayName,
+                        displayPath: meta.displayPath,
+                        kind: meta.fileType,
+                        icon: meta.fileTypeIcon,
+                        color: meta.fileTypeColor,
+                        sizeMB: (f.size / 1024 / 1024).toFixed(2),
+                        status: 'pending',
+                        download_url: null,
+                        error: null,
+                    };
+                });
+
+                renderBatchResult(batchItems, '<i class="fas fa-layer-group"></i> Batch processing started');
+
+                for (let i = 0; i < batchItems.length; i++) {
+                    const item = batchItems[i];
+                    item.status = 'processing';
+                    renderBatchResult(batchItems, `<i class=\"fas fa-layer-group\"></i> Batch (${i + 1}/${batchItems.length})`);
+
+                    const prefix = `(${i + 1}/${batchItems.length}) ${item.name} - `;
+                    const result = await uploadSingleFile(item.file, systemPrompt, userPrompt, prefix);
+
+                    if (result.ok) {
+                        item.status = 'success';
+                        item.download_url = result.data?.download_url || null;
+                    } else {
+                        item.status = 'error';
+                        item.error = (result.data && result.data.detail) ? result.data.detail : 'Processing failed';
+                    }
+
+                    renderBatchResult(batchItems);
+                }
+            } catch (error) {
+                showResult('error', '<i class="fas fa-times-circle"></i> Upload failed: ' + error.message);
+            } finally {
+                setTimeout(() => {
+                    showProgress(false);
+                    uploadBtn.style.display = 'block';
+                    uploadBtn.disabled = selectedFiles.length === 0;
+                    updateUploadButtonState();
+                }, 1000);
+            }
+        }
+
+        async function processSharePoint() {
+            const fileUrl = document.getElementById('sharepointUrl').value;
+            const folderPath = document.getElementById('sharepointFolder').value;
+
+            if (!fileUrl) {
+                showResult('error', '<i class="fas fa-exclamation-circle"></i> Please enter a SharePoint file URL or path.');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file_url', fileUrl);
+            if (folderPath) {
+                formData.append('folder_path', folderPath);
+            }
+
+            showProgress(true);
+            hideResult();
+
+            try {
+                const response = await fetch('/api/process-sharepoint', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showResult('success', '<i class="fas fa-check-circle"></i> SharePoint PDF processed successfully!', data);
+                } else {
+                    showResult('error', '<i class="fas fa-times-circle"></i> ' + (data.detail || 'Processing failed'));
+                }
+            } catch (error) {
+                showResult('error', '<i class="fas fa-times-circle"></i> Processing failed: ' + error.message);
+            } finally {
+                showProgress(false);
+            }
+        }
+
+        function setSecretStatusText(isSet) {
+            const el = document.getElementById('spSecretStatus');
+            if (!el) return;
+            el.textContent = isSet ? '(set)' : '(not set)';
+        }
+
+        async function loadSharePointSettings() {
+            try {
+                const response = await fetch('/api/settings/sharepoint', { method: 'GET' });
+                const data = await response.json();
+                if (!response.ok) {
+                    showResult('error', '<i class="fas fa-times-circle"></i> Failed to load SharePoint settings: ' + (data.detail || 'Unknown error'));
+                    return;
+                }
+
+                document.getElementById('spClientId').value = data.client_id || '';
+                document.getElementById('spTenant').value = data.tenant || '';
+                document.getElementById('spLink').value = data.link || '';
+                document.getElementById('spDefaultFolder').value = data.folder || '';
+                document.getElementById('spPollInterval').value = (data.poll_interval !== null && data.poll_interval !== undefined) ? data.poll_interval : '';
+
+                // Secret is intentionally not returned. Keep input blank.
+                document.getElementById('spSecret').value = '';
+                setSecretStatusText(Boolean(data.secret_set));
+
+                // Convenience: default the processing folder field from settings if empty.
+                const procFolder = document.getElementById('sharepointFolder');
+                if (procFolder && !procFolder.value && data.folder) {
+                    procFolder.value = data.folder;
+                }
+
+                // Preload folder browser with default folder.
+                const startFolder = (data.folder || '').trim() || (procFolder ? (procFolder.value || '').trim() : '') || '/';
+                await browseSharePoint(startFolder);
+            } catch (e) {
+                showResult('error', '<i class="fas fa-times-circle"></i> Failed to load SharePoint settings: ' + e.message);
+            }
+        }
+
+        async function saveSharePointSettings() {
+            const payload = {
+                client_id: document.getElementById('spClientId').value || '',
+                tenant: document.getElementById('spTenant').value || '',
+                secret: document.getElementById('spSecret').value || '',
+                link: document.getElementById('spLink').value || '',
+                folder: document.getElementById('spDefaultFolder').value || '',
+                poll_interval: document.getElementById('spPollInterval').value || ''
+            };
+
+            try {
+                const response = await fetch('/api/settings/sharepoint', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    showResult('error', '<i class="fas fa-times-circle"></i> Failed to save SharePoint settings: ' + (data.detail || 'Unknown error'));
+                    return;
+                }
+                // Secret is write-only; clear it after save.
+                document.getElementById('spSecret').value = '';
+                setSecretStatusText(Boolean(data.secret_set));
+                showResult('success', '<i class="fas fa-check-circle"></i> SharePoint settings saved.');
+            } catch (e) {
+                showResult('error', '<i class="fas fa-times-circle"></i> Failed to save SharePoint settings: ' + e.message);
+            }
+        }
+
+        function setSharePointValidateBox(kind, html) {
+            const box = document.getElementById('spValidateStatusBox');
+            if (!box) return;
+            box.style.display = 'block';
+            const isError = kind === 'error';
+            box.style.background = isError ? 'rgba(239, 68, 68, 0.10)' : 'rgba(34, 197, 94, 0.10)';
+            box.style.border = isError ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid rgba(34, 197, 94, 0.35)';
+            box.style.color = isError ? '#991b1b' : '#166534';
+            box.innerHTML = html;
+        }
+
+        async function validateSharePointSettings() {
+            try {
+                setSharePointValidateBox('success', '<i class="fas fa-spinner fa-spin"></i> Validating SharePoint connection…');
+                const response = await fetch('/api/sharepoint/validate', { method: 'GET' });
+                const data = await response.json();
+
+                if (!response.ok || !data || data.ok !== true) {
+                    const err = (data && data.error) ? data.error : {};
+                    const msg = err.message || (data && data.detail) || 'Validation failed';
+                    const aadsts = err.aadsts_code ? `<div style="margin-top:6px;"><b>${escapeHtml(err.aadsts_code)}</b></div>` : '';
+                    const hint = err.hint ? `<div style="margin-top:6px; opacity:.9;">Hint: ${escapeHtml(err.hint)}</div>` : '';
+                    const missing = (err.missing && err.missing.length)
+                        ? `<div style="margin-top:6px; opacity:.9;">Missing: ${escapeHtml(err.missing.join(', '))}</div>`
+                        : '';
+                    const cfg = data && data.config ? data.config : null;
+                    const cfgHtml = cfg
+                        ? `<div style="margin-top:8px; opacity:.9; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;">
+                               client_id: ${escapeHtml(String(cfg.client_id || ''))}<br/>
+                               tenant: ${escapeHtml(String(cfg.tenant || ''))}<br/>
+                               secret_length: ${escapeHtml(String(cfg.secret_length ?? ''))}<br/>
+                               secret_has_whitespace: ${escapeHtml(String(cfg.secret_has_whitespace ?? ''))}<br/>
+                               secret_looks_like_guid: ${escapeHtml(String(cfg.secret_looks_like_guid ?? ''))}
+                           </div>`
+                        : '';
+                    setSharePointValidateBox('error', `<div><i class="fas fa-triangle-exclamation"></i> ${escapeHtml(msg)}</div>${aadsts}${hint}${missing}${cfgHtml}`);
+                    return;
+                }
+
+                const webTitle = (data.web && data.web.title) ? data.web.title : '';
+                const webUrl = (data.web && data.web.url) ? data.web.url : (data.site_url || '');
+                const folderProbe = data.folder_probe;
+                let folderHtml = '';
+                if (folderProbe) {
+                    if (folderProbe.exists) {
+                        folderHtml = `<div style="margin-top:6px; opacity:.9;">Folder OK: ${escapeHtml(folderProbe.path || '')}</div>`;
+                    } else {
+                        folderHtml = `<div style="margin-top:6px; opacity:.9;">Folder check failed: ${escapeHtml(folderProbe.path || '')}</div>`;
+                    }
+                }
+
+                setSharePointValidateBox(
+                    'success',
+                    `<div><i class="fas fa-check-circle"></i> Connected to SharePoint successfully.</div>` +
+                    (webTitle ? `<div style="margin-top:6px; opacity:.9;">Site: <b>${escapeHtml(webTitle)}</b></div>` : '') +
+                    (webUrl ? `<div style="margin-top:6px; opacity:.9;">URL: ${escapeHtml(webUrl)}</div>` : '') +
+                    folderHtml
+                );
+            } catch (e) {
+                setSharePointValidateBox('error', `<div><i class="fas fa-triangle-exclamation"></i> Validation failed: ${escapeHtml(e.message || String(e))}</div>`);
+            }
+        }
+
+        let spBrowseCurrent = '/';
+
+        function setBrowsePath(path) {
+            spBrowseCurrent = path || '/';
+            const el = document.getElementById('spBrowsePath');
+            if (el) el.textContent = spBrowseCurrent;
+        }
+
+        function setSharePointTreeStatus(kind, html) {
+            const box = document.getElementById('spTreeStatus');
+            if (!box) return;
+            box.style.display = 'block';
+            const isError = kind === 'error';
+            box.style.background = isError ? 'rgba(239, 68, 68, 0.10)' : 'rgba(34, 197, 94, 0.10)';
+            box.style.border = isError ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid rgba(34, 197, 94, 0.35)';
+            box.style.color = isError ? '#991b1b' : '#166534';
+            box.innerHTML = html;
+        }
+
+        function useBrowsePathForTree() {
+            const input = document.getElementById('spTreePath');
+            if (input) input.value = spBrowseCurrent || '/';
+        }
+
+        function formatSharePointTree(tree) {
+            const lines = [];
+
+            function iconFolder() { return '📁'; }
+            function iconFile(isPdf) { return isPdf ? '📄' : '🗎'; }
+
+            function walk(node, prefix, isLast) {
+                const name = node && node.name ? String(node.name) : '';
+                const path = node && node.path ? String(node.path) : '';
+                const truncated = !!(node && node.truncated);
+                const label = name || path || '(folder)';
+                const connector = prefix ? (isLast ? '└─ ' : '├─ ') : '';
+                const suffix = truncated ? '  (truncated)' : '';
+                lines.push(prefix + connector + iconFolder() + ' ' + label + suffix);
+
+                const nextPrefix = prefix + (prefix ? (isLast ? '   ' : '│  ') : '');
+
+                const folders = (node && node.folders) ? node.folders : [];
+                const files = (node && node.files) ? node.files : [];
+
+                const total = folders.length + files.length;
+                let idx = 0;
+
+                folders.forEach(f => {
+                    idx += 1;
+                    walk(f, nextPrefix, idx === total);
+                });
+
+                files.forEach(f => {
+                    idx += 1;
+                    const fname = f && f.name ? String(f.name) : '';
+                    const fpath = f && f.path ? String(f.path) : '';
+                    const isPdf = !!(f && f.is_pdf);
+                    const flabel = fname || fpath || '(file)';
+                    const fconn = idx === total ? '└─ ' : '├─ ';
+                    lines.push(nextPrefix + fconn + iconFile(isPdf) + ' ' + flabel);
+                });
+            }
+
+            const root = tree && tree.root ? tree.root : null;
+            if (!root) return '(No data)';
+            walk(root, '', true);
+            return lines.join('\n');
+        }
+
+        async function loadSharePointTree() {
+            const outEl = document.getElementById('spTreeOutput');
+            if (outEl) outEl.textContent = '';
+
+            const pathInput = document.getElementById('spTreePath');
+            const depthInput = document.getElementById('spTreeDepth');
+            const maxNodesInput = document.getElementById('spTreeMaxNodes');
+            const includeFilesInput = document.getElementById('spTreeIncludeFiles');
+
+            const folderPath = (pathInput && pathInput.value ? pathInput.value : '').trim() || (spBrowseCurrent || '/');
+            const depth = depthInput && depthInput.value ? depthInput.value : '4';
+            const maxNodes = maxNodesInput && maxNodesInput.value ? maxNodesInput.value : '1500';
+            const includeFiles = !!(includeFilesInput && includeFilesInput.checked);
+
+            try {
+                setSharePointTreeStatus('success', '<i class="fas fa-spinner fa-spin"></i> Loading tree…');
+                const qs = new URLSearchParams({
+                    folder_path: folderPath,
+                    depth: String(depth),
+                    max_nodes: String(maxNodes),
+                    include_files: includeFiles ? 'true' : 'false'
+                });
+                const response = await fetch('/api/sharepoint/tree?' + qs.toString(), { method: 'GET' });
+                const data = await response.json();
+                if (!response.ok) {
+                    const msg = (data && (data.detail || data.error)) ? (data.detail || data.error) : 'Failed to load tree';
+                    setSharePointTreeStatus('error', `<div><i class="fas fa-triangle-exclamation"></i> ${escapeHtml(String(msg))}</div>`);
+                    return;
+                }
+
+                const visited = (data && typeof data.visited === 'number') ? data.visited : null;
+                const trunc = data && data.root && data.root.truncated;
+                const extra = visited !== null ? `Visited: <b>${visited}</b>` : '';
+                const extra2 = trunc ? ' • <b>Truncated</b>' : '';
+                setSharePointTreeStatus('success', `<div><i class="fas fa-check-circle"></i> Tree loaded. ${extra}${extra2}</div>`);
+                if (outEl) outEl.textContent = formatSharePointTree(data);
+            } catch (e) {
+                setSharePointTreeStatus('error', `<div><i class="fas fa-triangle-exclamation"></i> Failed to load tree: ${escapeHtml(e.message || String(e))}</div>`);
+            }
+        }
+
+        function renderBrowseList(items) {
+            const el = document.getElementById('spBrowseList');
+            if (!el) return;
+
+            const folders = (items && items.folders) ? items.folders : [];
+            const files = (items && items.files) ? items.files : [];
+
+            if (!folders.length && !files.length) {
+                el.innerHTML = '<div style="opacity:.8; font-size: 13px;">(Empty)</div>';
+                return;
+            }
+
+            const folderHtml = folders.map(f => {
+                const name = f.name || f.server_relative_url || '';
+                const url = f.server_relative_url || '';
+                return `
+                    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-radius:10px; background: rgba(255,255,255,0.55); margin-bottom:8px; cursor:pointer;" onclick="browseSharePoint('${encodeURIComponent(url)}')">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <i class="fas fa-folder" style="color:#6366f1;"></i>
+                            <div style="font-weight:600;">${escapeHtml(name)}</div>
+                        </div>
+                        <i class="fas fa-chevron-right" style="opacity:.6;"></i>
+                    </div>
+                `;
+            }).join('');
+
+            const fileHtml = files.map(f => {
+                const name = f.name || f.server_relative_url || '';
+                const url = f.server_relative_url || '';
+                const isPdf = !!f.is_pdf;
+                const icon = isPdf ? 'fa-file-pdf' : 'fa-file';
+                const color = isPdf ? '#ef4444' : '#64748b';
+                return `
+                    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-radius:10px; background: rgba(255,255,255,0.55); margin-bottom:8px;">
+                        <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+                            <i class="fas ${icon}" style="color:${color};"></i>
+                            <div style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(name)}</div>
+                        </div>
+                        <button class="btn" type="button" onclick="selectSharePointFile(event, '${encodeURIComponent(url)}')" style="padding: 10px 12px; min-width: 92px;">
+                            <span><i class="fas fa-check"></i> Use</span>
+                        </button>
+                    </div>
+                `;
+            }).join('');
+
+            el.innerHTML = folderHtml + fileHtml;
+        }
+
+        function escapeHtml(s) {
+            return String(s || '')
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#39;');
+        }
+
+        async function browseSharePoint(folder) {
+            // folder may arrive encoded from onclick
+            let folderPath = folder;
+            try {
+                if (typeof folderPath === 'string' && folderPath.includes('%2F')) {
+                    folderPath = decodeURIComponent(folderPath);
+                }
+            } catch (_) {}
+            folderPath = (folderPath || spBrowseCurrent || '/').trim() || '/';
+
+            setBrowsePath(folderPath);
+            const listEl = document.getElementById('spBrowseList');
+            if (listEl) listEl.innerHTML = '<div style="opacity:.8; font-size: 13px;">Loading…</div>';
+
+            try {
+                const qs = new URLSearchParams({ folder_path: folderPath });
+                const response = await fetch('/api/sharepoint/browse?' + qs.toString(), { method: 'GET' });
+                const data = await response.json();
+                if (!response.ok) {
+                    showResult('error', '<i class="fas fa-times-circle"></i> Failed to browse SharePoint: ' + (data.detail || 'Unknown error'));
+                    if (listEl) listEl.innerHTML = '';
+                    return;
+                }
+                setBrowsePath(data.path || folderPath);
+                renderBrowseList(data);
+            } catch (e) {
+                showResult('error', '<i class="fas fa-times-circle"></i> Failed to browse SharePoint: ' + e.message);
+                if (listEl) listEl.innerHTML = '';
+            }
+        }
+
+        function browseSharePointUp() {
+            const cur = (spBrowseCurrent || '/').replace(/\/+$/, '') || '/';
+            if (cur === '/' || cur === '') {
+                browseSharePoint('/');
+                return;
+            }
+            const parts = cur.split('/').filter(Boolean);
+            parts.pop();
+            const parent = '/' + parts.join('/');
+            browseSharePoint(parent || '/');
+        }
+
+        function selectSharePointFile(evt, encodedUrl) {
+            if (evt) evt.stopPropagation();
+            let url = '';
+            try { url = decodeURIComponent(encodedUrl || ''); } catch (_) { url = encodedUrl || ''; }
+            const input = document.getElementById('sharepointUrl');
+            const folderInput = document.getElementById('sharepointFolder');
+            if (input) input.value = url;
+            // If using a full server-relative file path, folder becomes unnecessary.
+            if (folderInput) folderInput.value = '';
+        }
+
+        async function processFolder() {
+            const folderPath = document.getElementById('folderPath').value;
+
+            if (!folderPath) {
+                showResult('error', '<i class="fas fa-exclamation-circle"></i> Please enter a folder path.');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('folder_path', folderPath);
+
+            showProgress(true);
+            hideResult();
+
+            try {
+                const response = await fetch('/api/process-folder', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    let content = `<div class="result-title"><i class="fas fa-check-circle"></i> Completed successfully!</div>`;
+                    content += `<div class="result-content">Processed ${data.results.length} PDF files</div>`;
+                    
+                    data.results.forEach((result, index) => {
+                        content += `
+                            <div style="margin-top: 15px; padding: 15px; background: rgba(255, 255, 255, 0.5); border-radius: 8px;">
+                                <strong><i class="fas fa-file"></i> File ${index + 1}:</strong> ${result.filename}<br>
+                                <a href="${result.download_url}" class="download-link" style="margin-top: 10px;">
+                                    <i class="fas fa-download"></i> Download JSON
+                                </a>
+                            </div>
+                        `;
+                    });
+
+                    showResult('success', content);
+                } else {
+                    showResult('error', '<i class="fas fa-times-circle"></i> ' + (data.detail || 'Processing failed'));
+                }
+            } catch (error) {
+                showResult('error', '<i class="fas fa-times-circle"></i> Processing failed: ' + error.message);
+            } finally {
+                showProgress(false);
+            }
+        }
+
+        function generateTaskId() {
+            return 'task_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        }
+        
+        async function connectWebSocket(taskId) {
+            return new Promise((resolve, reject) => {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/ws/progress/${taskId}`;
+                
+                ws = new WebSocket(wsUrl);
+                
+                ws.onopen = () => {
+                    console.log('[WebSocket] Connected:', taskId);
+                    resolve();
+                };
+                
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.percentage !== undefined) {
+                            updateProgress(data.percentage, data.message || data.stage || 'Processing…');
+                        }
+                    } catch (e) {
+                        console.error('[WebSocket] Failed to parse message:', e);
+                    }
+                };
+                
+                ws.onerror = (error) => {
+                    console.error('[WebSocket] Connection error:', error);
+                    // Don't reject; continue upload even if WebSocket fails.
+                    resolve();
+                };
+                
+                ws.onclose = () => {
+                    console.log('[WebSocket] Closed');
+                    ws = null;
+                };
+            });
+        }
+        
+        function showProgress(show) {
+            const progressDiv = document.getElementById('progress');
+            if (progressDiv) {
+                progressDiv.style.display = show ? 'block' : 'none';
+            }
+            if (!show) {
+                currentProgress = 0;
+                targetProgress = 0;
+                isAnimating = false;
+                const progressFill = document.getElementById('progressFill');
+                if (progressFill) {
+                    progressFill.style.width = '0%';
+                }
+                updateProgress(0, 'Ready');
+                // Close WebSocket
+                if (ws) {
+                    ws.close();
+                    ws = null;
+                }
+            }
+        }
+
+        function updateProgress(percentage, text) {
+            const progressFill = document.getElementById('progressFill');
+            const progressLabel = document.getElementById('progressLabel');
+            const progressPercent = document.getElementById('progressPercent');
+            
+            if (progressFill) {
+                const next = Math.max(0, Math.min(100, percentage));
+                // UI-side monotonic progress protection (even if backend clamps)
+                targetProgress = Math.max(targetProgress, next);
+                
+                // Smooth animation
+                if (!isAnimating) {
+                    animateProgress();
+                }
+            }
+
+            if (progressLabel && typeof text === 'string') {
+                progressLabel.textContent = text;
+            }
+            if (progressPercent) {
+                progressPercent.textContent = `${Math.round(targetProgress)}%`;
+            }
+        }
+
+        function animateProgress() {
+            if (Math.abs(currentProgress - targetProgress) < 0.1) {
+                currentProgress = targetProgress;
+                isAnimating = false;
+                return;
+            }
+            
+            isAnimating = true;
+            
+            // Smooth transition (easing)
+            const diff = targetProgress - currentProgress;
+            currentProgress += diff * 0.15; // Adjust this value to change animation speed (0.1-0.3)
+            
+            const progressFill = document.getElementById('progressFill');
+            if (progressFill) {
+                progressFill.style.width = currentProgress + '%';
+            }
+            
+            requestAnimationFrame(animateProgress);
+        }
+
+        function showResult(type, message, data = null) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.className = `result ${type}`;
+            resultDiv.style.display = 'block';
+
+            let content = '';
+            if (typeof message === 'string') {
+                content = `<div class="result-title">${message}</div>`;
+            } else {
+                content = message;
+            }
+
+            if (data && data.download_url) {
+                content += `<div style="margin-top: 15px;">
+                    <a href="${data.download_url}" class="download-link">
+                        <i class="fas fa-download"></i> Download JSON file
+                    </a>
+                </div>`;
+            }
+
+            resultDiv.innerHTML = content;
+        }
+
+        function hideResult() {
+            document.getElementById('result').style.display = 'none';
+        }
+    </script>
+</body>
+</html>

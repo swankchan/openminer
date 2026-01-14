@@ -1,0 +1,42 @@
+<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="omGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#667eea"/>
+      <stop offset="45%" stop-color="#22c1c3"/>
+      <stop offset="100%" stop-color="#ff6a88"/>
+    </linearGradient>
+    <linearGradient id="omRing" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#667eea"/>
+      <stop offset="35%" stop-color="#22c1c3"/>
+      <stop offset="70%" stop-color="#ff6a88"/>
+      <stop offset="100%" stop-color="#764ba2"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Outer badge ring -->
+  <circle cx="60" cy="60" r="54" fill="rgba(102, 126, 234, 0.10)"/>
+  <circle cx="60" cy="60" r="52" fill="none" stroke="url(#omRing)" stroke-width="3.2" opacity="0.95"/>
+
+  <!-- App Tile -->
+  <rect x="24" y="26" width="72" height="70" rx="18" fill="url(#omGrad)"/>
+  <rect x="28" y="30" width="64" height="62" rx="16" fill="rgba(255,255,255,0.14)"/>
+
+  <!-- Document -->
+  <path d="M44 40h22l10 10v30a8 8 0 0 1-8 8H44a8 8 0 0 1-8-8V48a8 8 0 0 1 8-8z" fill="rgba(255,255,255,0.92)"/>
+  <path d="M66 40v10a4 4 0 0 0 4 4h10" fill="rgba(15,23,42,0.08)"/>
+  <g stroke="rgba(15,23,42,0.35)" stroke-width="2.6" stroke-linecap="round">
+    <line x1="42" y1="58" x2="76" y2="58"/>
+    <line x1="42" y1="68" x2="72" y2="68"/>
+    <line x1="42" y1="78" x2="66" y2="78"/>
+  </g>
+
+  <!-- Pickaxe -->
+  <g transform="translate(76, 34) rotate(-12)">
+    <path d="M0 0 L0 28" stroke="#0b1024" stroke-width="5.2" stroke-linecap="round"/>
+    <path d="M0 26 L-14 36 L-10 42 L0 34 Z" fill="#0b1024"/>
+    <path d="M0 26 L14 36 L10 42 L0 34 Z" fill="#0b1024"/>
+  </g>
+
+  <!-- Spark -->
+  <path d="M88 56 l3 6 l6 3 l-6 3 l-3 6 l-3-6 l-6-3 l6-3 z" fill="rgba(255,106,136,0.95)"/>
+</svg>

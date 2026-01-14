@@ -1,0 +1,105 @@
+# SharePoint Hierarchy
+
+Generated: 2026-01-14 22:06:42Z  
+Site: https://jebsengroup.sharepoint.com/sites/APOCR  
+Start folder: /  
+Params: depth=6, include_files=True, max_nodes=20000  
+Visited nodes: 95  
+
+## Tree
+
+- root/
+  - Non-Production/
+    - Inbox/
+      - Beverage/
+        - B101-C0 JBCL Beer/
+        - B101-G0 JBCL Wine/
+        - B102-H0 JIHK/
+        - B11V-H301 Coco Venture/
+        - B2A1-G0 China Wine/
+        - B2J1-H0 31JIU/
+      - Consumer/
+        - P101-D0 JCP HK/
+        - P1Q1-D0 JPet HK/
+        - P1Q3-D0 ADP HK/
+        - P1V1-D0 Vetopia HK/
+        - Q301-D0 JCC BJ/
+        - Q500-D0 JCC GZ/
+        - R801-D0 JPet SH/
+      - Jebsen Captial/
+      - Jebsen Group/
+      - Jebsen Logistics/
+    - Processed/
+      - Beverage/
+        - B101-C0 JBCL Beer/
+          - 2025-12/
+          - 2026-01/
+          - 2026-02/
+          - 2026-03/
+        - B101-G0 JBCL Wine/
+          - 2025-12/
+          - 2026-01/
+          - 2026-02/
+          - 2026-03/
+        - B102-H0 JIHK/
+          - 2025-12/
+          - 2026-01/
+          - 2026-02/
+          - 2026-03/
+        - B11V-H301 Coco Venture/
+          - 2025-12/
+          - 2026-01/
+          - 2026-02/
+          - 2026-03/
+        - B2A1-G0 China Wine/
+          - 2025-12/
+          - 2026-01/
+          - 2026-02/
+          - 2026-03/
+        - B2J1-H0 31JIU/
+          - 2025-12/
+          - 2026-01/
+          - 2026-02/
+          - 2026-03/
+      - Consumer/
+        - P101-D0 JCP HK/
+          - 2025-12/
+          - 2026-01/
+          - 2026-02/
+        - P1Q1-D0 JPet HK/
+          - 2025-12/
+          - 2026-01/
+          - 2026-02/
+        - P1Q3-D0 ADP HK/
+          - 2025-12/
+          - 2026-01/
+          - 2026-02/
+        - P1V1-D0 Vetopia HK/
+          - 2025-12/
+          - 2026-01/
+          - 2026-02/
+        - Q301-D0 JCC BJ/
+          - 2025-12/
+          - 2026-01/
+          - 2026-02/
+        - Q500-D0 JCC GZ/
+          - 2025-12/
+          - 2026-01/
+          - 2026-02/
+        - R801-D0 JPet SH/
+          - 2025-12/
+          - 2026-01/
+          - 2026-02/
+      - Jebsen Captial/
+        - 2025-12/
+        - 2026-01/
+        - 2026-02/
+      - Jebsen Group/
+        - 2025-12/
+        - 2026-01/
+        - 2026-02/
+      - Jebsen Logistics/
+        - 2025-12/
+        - 2026-01/
+        - 2026-02/
+  - Production/

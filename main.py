@@ -1,0 +1,1246 @@
+"""
+PDF OCR 與資料提取應用程式主檔案
+"""
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, WebSocket, WebSocketDisconnect, Body
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+import os
+import uuid
+from pathlib import Path
+from datetime import datetime
+from typing import Optional, List, Dict, Set, Callable, Awaitable, Any
+import uvicorn
+import json
+import asyncio
+from dataclasses import dataclass
+
+from services.pdf_processor import PDFProcessor
+from services.mineru_service import MinerUService
+from services.azure_ai_service import AzureAIService
+from services.sharepoint_service import SharePointService
+from services.folder_service import FolderService
+from config import (
+    UPLOAD_DIR,
+    JSON_OUTPUT_DIR,
+    OUTPUT_DIR,
+    CSV_OUTPUT_DIR,
+    FORCE_OCR,
+    DEBUG,
+    JSON_GENERATION_METHOD,
+    INIT_MINERU_ON_STARTUP,
+    BASE_DIR,
+    STATIC_DIR,
+    AI_SERVICE,
+    AZURE_OPENAI_TEMPERATURE,
+    OLLAMA_TEMPERATURE,
+    MAX_CONCURRENT_JOBS,
+)
+import re
+from dotenv import load_dotenv, dotenv_values
+from urllib.parse import urlparse
+
+# 初始化服務（全域變數）
+pdf_processor = PDFProcessor()
+mineru_service = MinerUService()
+azure_ai_service = AzureAIService()
+sharepoint_service = SharePointService()
+folder_service = FolderService()
+
+
+def _derive_sharepoint_site_url(link: str) -> str:
+    if not link:
+        return ""
+    try:
+        parsed = urlparse(link)
+        if not parsed.scheme or not parsed.netloc:
+            return ""
+
+        # Prefer keeping the site root: https://{host}/sites/{site}
+        path = parsed.path or ""
+        parts = [p for p in path.split("/") if p]
+        if len(parts) >= 2 and parts[0].lower() == "sites":
+            return f"{parsed.scheme}://{parsed.netloc}/sites/{parts[1]}"
+        return f"{parsed.scheme}://{parsed.netloc}"
+    except Exception:
+        return ""
+
+
+def _write_dotenv_updates(env_path: Path, updates: Dict[str, str]) -> None:
+    """Update specific keys in a .env file while preserving unrelated lines and comments."""
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    existing_lines: List[str] = []
+    if env_path.exists():
+        existing_lines = env_path.read_text(encoding="utf-8").splitlines(keepends=True)
+
+    keys = set(updates.keys())
+    found: Set[str] = set()
+    out_lines: List[str] = []
+
+    for line in existing_lines:
+        m = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=", line)
+        if not m:
+            out_lines.append(line)
+            continue
+
+        key = m.group(1)
+        if key not in keys:
+            out_lines.append(line)
+            continue
+
+        found.add(key)
+
+        # Preserve a trailing comment when it looks like a comment separator (space + #)
+        comment = ""
+        comment_match = re.search(r"\s+#.*$", line)
+        if comment_match:
+            comment = comment_match.group(0).rstrip("\r\n")
+
+        raw_value = updates.get(key, "")
+        # Quote if value contains spaces or a '#'
+        needs_quotes = (" " in raw_value) or ("\t" in raw_value) or ("#" in raw_value)
+        value_str = f"\"{raw_value.replace('\\\\', '\\\\\\\\').replace('\\"', '\\\\"')}\"" if needs_quotes else raw_value
+
+        newline = "\n"
+        if line.endswith("\r\n"):
+            newline = "\r\n"
+        out_lines.append(f"{key}={value_str}{comment}{newline}")
+
+    # Append missing keys
+    for key in updates.keys():
+        if key in found:
+            continue
+        raw_value = updates.get(key, "")
+        needs_quotes = (" " in raw_value) or ("\t" in raw_value) or ("#" in raw_value)
+        value_str = f"\"{raw_value.replace('\\\\', '\\\\\\\\').replace('\\"', '\\\\"')}\"" if needs_quotes else raw_value
+        out_lines.append(f"{key}={value_str}\n")
+
+    env_path.write_text("".join(out_lines), encoding="utf-8")
+
+
+def _strip_wrapping_quotes(value: str) -> str:
+    """Remove a single pair of wrapping quotes from a string value (common when users paste secrets)."""
+    if value is None:
+        return ""
+    s = str(value).strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
+        return s[1:-1].strip()
+    return s
+
+
+def _extract_aadsts_code(message: str) -> Optional[str]:
+    if not message:
+        return None
+    m = re.search(r"AADSTS(\d{4,})", message)
+    return f"AADSTS{m.group(1)}" if m else None
+
+
+def _aadsts_hint(code: Optional[str]) -> Optional[str]:
+    if not code:
+        return None
+    hints = {
+        "AADSTS7000215": "Invalid client secret. Make sure you pasted the *secret Value* (not the Secret ID), and that the secret is not expired.",
+        "AADSTS7000222": "Client secret is expired. Create a new secret Value and update SHAREPOINT_SECRET.",
+        "AADSTS700016": "Application (client) ID may be wrong, or the app isn't found in this tenant.",
+        "AADSTS500011": "Resource principal not found. The site/resource URL might be wrong, or admin consent/app permissions are missing.",
+        "AADSTS65001": "Admin consent required or missing permissions. Grant/admin-consent the required SharePoint permissions.",
+    }
+    return hints.get(code)
+
+# WebSocket 連接管理器
+class ProgressManager:
+    """管理 WebSocket 連接和進度更新"""
+    
+    def __init__(self):
+        self.active_connections: Dict[str, WebSocket] = {}
+        self.progress_data: Dict[str, dict] = {}
+    
+    async def connect(self, websocket: WebSocket, task_id: str):
+        """接受 WebSocket 連接"""
+        await websocket.accept()
+        self.active_connections[task_id] = websocket
+        if DEBUG:
+            print(f"[WEBSOCKET] 連接建立: {task_id}")
+    
+    def disconnect(self, task_id: str):
+        """斷開 WebSocket 連接"""
+        if task_id in self.active_connections:
+            del self.active_connections[task_id]
+        if task_id in self.progress_data:
+            del self.progress_data[task_id]
+        if DEBUG:
+            print(f"[WEBSOCKET] 連接斷開: {task_id}")
+    
+    async def send_progress(self, task_id: str, percentage: int, message: str, stage: str = None):
+        """發送進度更新"""
+        if task_id in self.active_connections:
+            try:
+                # 強制進度「只增不減」：避免心跳進度跑到前面後，
+                # 真正的 MinerU 階段訊息（例如 Layout/MFD）反而把百分比拉低。
+                last = self.progress_data.get(task_id, {})
+                last_pct = int(last.get("percentage", -1)) if last else -1
+                safe_pct = max(int(percentage), last_pct)
+
+                progress_data = {
+                    "percentage": safe_pct,
+                    "message": message,
+                    "stage": stage or message
+                }
+
+                # 去重：同樣內容就不重覆送，減少前端抖動/刷屏
+                if last and last.get("percentage") == progress_data["percentage"] and last.get("message") == progress_data["message"] and last.get("stage") == progress_data["stage"]:
+                    return
+                self.progress_data[task_id] = progress_data
+                await self.active_connections[task_id].send_json(progress_data)
+                if DEBUG:
+                    print(f"[WEBSOCKET] 進度更新 [{task_id}]: {progress_data['percentage']}% - {message}")
+            except Exception as e:
+                if DEBUG:
+                    print(f"[WEBSOCKET] 發送進度失敗 [{task_id}]: {e}")
+                self.disconnect(task_id)
+    
+    async def send_error(self, task_id: str, error_message: str):
+        """發送錯誤訊息"""
+        if task_id in self.active_connections:
+            try:
+                error_data = {
+                    "percentage": -1,
+                    "message": f"錯誤: {error_message}",
+                    "stage": "error",
+                    "error": True
+                }
+                await self.active_connections[task_id].send_json(error_data)
+            except Exception as e:
+                if DEBUG:
+                    print(f"[WEBSOCKET] 發送錯誤失敗 [{task_id}]: {e}")
+                self.disconnect(task_id)
+
+
+@dataclass
+class QueuedJob:
+    """排隊中的工作（逐個處理）"""
+    description: str
+    task_id: Optional[str]
+    position: int
+    run: Callable[[], Awaitable[Any]]
+    future: "asyncio.Future[Any]"
+
+
+class ProcessingQueue:
+    """單機排隊器：用 asyncio.Queue 控制同一時間最多 N 個工作在跑（預設 1）"""
+
+    def __init__(self, progress: ProgressManager, concurrency: int = 1):
+        self._progress = progress
+        self._queue: "asyncio.Queue[QueuedJob]" = asyncio.Queue()
+        self._workers: List[asyncio.Task] = []
+        self._concurrency = max(1, int(concurrency))
+
+    async def start(self):
+        if self._workers:
+            return
+        for i in range(self._concurrency):
+            self._workers.append(asyncio.create_task(self._worker_loop(i)))
+
+    async def stop(self):
+        for t in self._workers:
+            t.cancel()
+        for t in self._workers:
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+        self._workers = []
+
+    def _queue_position(self) -> int:
+        # position 是「入隊時」快照（不做動態更新）
+        return int(self._queue.qsize()) + 1
+
+    async def enqueue(self, description: str, task_id: Optional[str], run: Callable[[], Awaitable[Any]]) -> Any:
+        loop = asyncio.get_running_loop()
+        fut: "asyncio.Future[Any]" = loop.create_future()
+        pos = self._queue_position()
+        job = QueuedJob(description=description, task_id=task_id, position=pos, run=run, future=fut)
+
+        # 先告知前端：已入隊
+        if task_id:
+            if pos <= 1:
+                await self._progress.send_progress(task_id, 3, "排隊中…", "queued")
+            else:
+                await self._progress.send_progress(task_id, 3, f"排隊中…（第 {pos} 位）", "queued")
+
+        await self._queue.put(job)
+        return await fut
+
+    async def _worker_loop(self, worker_idx: int):
+        while True:
+            job = await self._queue.get()
+            try:
+                if job.task_id:
+                    await self._progress.send_progress(job.task_id, 4, "輪到你了，準備開始…", "dequeue")
+                result = await job.run()
+                if not job.future.done():
+                    job.future.set_result(result)
+            except Exception as e:
+                if job.task_id:
+                    await self._progress.send_error(job.task_id, str(e))
+                if not job.future.done():
+                    job.future.set_exception(e)
+            finally:
+                self._queue.task_done()
+
+
+def sanitize_filename(filename: str) -> str:
+    """
+    清理文件名，移除不安全的字符和 UUID 前綴
+    
+    處理以下情況：
+    1. 移除 UUID 前綴（例如：35d4eae2-5958-4aef-9f59-8cc8342c003d_YYC-2 → YYC-2）
+    2. 如果整個文件名是 UUID，使用默認名稱
+    3. 移除不安全的字符
+    """
+    # 移除擴展名
+    name = Path(filename).stem
+    
+    # UUID 格式：8-4-4-4-12 或 32 個十六進制字符
+    uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+    uuid_pattern_no_dash = r'^[0-9a-f]{32}'
+    
+    # 檢查並移除 UUID 前綴（帶下劃線或連字符分隔）
+    # 例如：35d4eae2-5958-4aef-9f59-8cc8342c003d_YYC-2 → YYC-2
+    if re.match(uuid_pattern, name, re.IGNORECASE):
+        # 移除 UUID 前綴（包括後面的分隔符）
+        name = re.sub(rf'^{uuid_pattern}[_-]?', '', name, flags=re.IGNORECASE)
+    elif re.match(uuid_pattern_no_dash, name, re.IGNORECASE):
+        # 移除 32 字符的 UUID 前綴
+        name = re.sub(rf'^{uuid_pattern_no_dash}[_-]?', '', name, flags=re.IGNORECASE)
+    
+    # 檢查是否整個文件名都是 UUID（移除前綴後為空）
+    if not name or name.strip() == '':
+        # 如果整個文件名都是 UUID，嘗試從原始文件名中提取有意義的部分
+        # 例如：如果原始文件名是 "document.pdf"，使用 "document"
+        original_stem = Path(filename).stem
+        # 嘗試找到第一個非 UUID 部分
+        parts = re.split(r'[_-]', original_stem)
+        for part in parts:
+            # 跳過 UUID 格式的部分
+            if not re.match(rf'^{uuid_pattern}$|^{uuid_pattern_no_dash}$', part, re.IGNORECASE):
+                if part and len(part) > 1:  # 至少 2 個字符
+                    name = part
+                    break
+        
+        # 如果還是找不到有意義的部分，使用默認名稱
+        if not name or name.strip() == '':
+            name = "document"
+    
+    # 移除或替換不安全的字符（Windows 不允許的字符）
+    # 不允許: < > : " / \ | ? *
+    name = re.sub(r'[<>:"/\\|?*]', '_', name)
+    # 移除多個連續的下劃線
+    name = re.sub(r'_+', '_', name)
+    # 移除開頭和結尾的點、空格和下劃線
+    name = name.strip('. _')
+    
+    # 如果為空，使用默認名稱
+    if not name:
+        name = "document"
+    
+    # 限制長度（Windows 路徑限制，保留一些餘量）
+    if len(name) > 200:
+        name = name[:200]
+    
+    return name
+
+
+def get_unique_csv_path(base_name: str, output_dir: Path) -> Path:
+    """獲取唯一的 CSV 文件路徑（永遠加 timestamp，避免覆蓋且方便追蹤批次）。"""
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    candidate = output_dir / f"{base_name}_{ts}.csv"
+    counter = 1
+    while candidate.exists():
+        candidate = output_dir / f"{base_name}_{ts}_{counter}.csv"
+        counter += 1
+    return candidate
+
+
+def get_unique_json_path(base_name: str, output_dir: Path) -> Path:
+    """獲取唯一的 JSON 文件路徑（永遠加 timestamp，避免覆蓋且方便追蹤批次）。"""
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    candidate = output_dir / f"{base_name}_{ts}.json"
+    counter = 1
+    while candidate.exists():
+        candidate = output_dir / f"{base_name}_{ts}_{counter}.json"
+        counter += 1
+    return candidate
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """應用程式生命週期管理（啟動和關閉）"""
+    # 啟動排隊器（預設單一併發：逐個處理）
+    app.state.processing_queue = ProcessingQueue(progress_manager, concurrency=MAX_CONCURRENT_JOBS)
+    await app.state.processing_queue.start()
+
+    # 啟動時初始化 MinerU（如果配置啟用）
+    if INIT_MINERU_ON_STARTUP:
+        if DEBUG:
+            print("[APP] 正在初始化 MinerU 服務...")
+        try:
+            # 不要阻塞 FastAPI 啟動：vLLM 初始化在某些環境可能非常久，
+            # 會導致前端頁面/WS 端點都無法連線。
+            asyncio.create_task(mineru_service._initialize())
+            if DEBUG:
+                print("[APP] MinerU 初始化已在背景啟動（不阻塞啟動）")
+        except Exception as e:
+            if DEBUG:
+                print(f"[APP] MinerU 初始化警告: {e}")
+    else:
+        if DEBUG:
+            print("[APP] MinerU 將在第一次使用時才初始化（INIT_MINERU_ON_STARTUP=False）")
+    
+    yield
+    
+    # 關閉時清理資源
+    try:
+        await app.state.processing_queue.stop()
+    except Exception:
+        pass
+
+    if DEBUG:
+        print("[APP] 正在關閉 MinerU 服務...")
+    try:
+        await mineru_service.shutdown()
+    except Exception as e:
+        if DEBUG:
+            print(f"[APP] MinerU 關閉警告: {e}")
+
+
+app = FastAPI(
+    title="PDF OCR 與資料提取應用程式",
+    lifespan=lifespan
+)
+
+# CORS 設定
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 掛載靜態文件目錄（用於 favicon 等）
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# 全局進度管理器
+progress_manager = ProgressManager()
+
+
+@app.websocket("/ws/progress/{task_id}")
+async def websocket_progress(websocket: WebSocket, task_id: str):
+    """WebSocket 端點用於實時進度更新"""
+    await progress_manager.connect(websocket, task_id)
+    try:
+        while True:
+            # 保持連接活躍，等待客戶端斷開
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        progress_manager.disconnect(task_id)
+    except Exception as e:
+        if DEBUG:
+            print(f"[WEBSOCKET] 連接錯誤 [{task_id}]: {e}")
+        progress_manager.disconnect(task_id)
+
+
+@app.get("/", response_class=HTMLResponse)
+async def read_root():
+    """主頁面"""
+    with open("templates/index.html", "r", encoding="utf-8") as f:
+        return HTMLResponse(
+            content=f.read(),
+            headers={
+                # index.html 內嵌大量 CSS/JS，開發/迭代時容易被瀏覽器快取而「睇唔到改動」
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+            },
+        )
+
+
+@app.get("/api/settings/sharepoint")
+async def get_sharepoint_settings():
+    """Return SharePoint settings for the UI. Secret is never returned."""
+    env_path = BASE_DIR / ".env"
+
+    # Prefer .env values (if present) so UI reflects what's saved.
+    values: Dict[str, str] = dict(os.environ)
+    if env_path.exists():
+        try:
+            for k, v in dotenv_values(env_path).items():
+                if v is not None:
+                    values[k] = v
+        except Exception:
+            pass
+
+    client_id = _strip_wrapping_quotes(values.get("SHAREPOINT_CLIENT_ID") or "")
+    tenant = _strip_wrapping_quotes(values.get("SHAREPOINT_TENANT") or values.get("SHAREPOINT_TENANT_ID") or "")
+    link = _strip_wrapping_quotes(values.get("SHAREPOINT_LINK") or values.get("SHAREPOINT_SITE_URL") or "")
+    folder = _strip_wrapping_quotes(values.get("SHAREPOINT_FOLDER") or "")
+
+    poll_raw = _strip_wrapping_quotes(values.get("SHAREPOINT_POLL_INTERVAL") or "")
+    poll_interval: Optional[int] = None
+    if poll_raw:
+        try:
+            poll_interval = int(float(str(poll_raw).split("#", 1)[0].strip()))
+        except Exception:
+            poll_interval = None
+
+    secret_set = bool(
+        _strip_wrapping_quotes(values.get("SHAREPOINT_SECRET") or values.get("SHAREPOINT_CLIENT_SECRET") or "")
+    )
+
+    return {
+        "client_id": client_id,
+        "tenant": tenant,
+        "link": link,
+        "folder": folder,
+        "poll_interval": poll_interval,
+        "secret_set": secret_set,
+    }
+
+
+@app.post("/api/settings/sharepoint")
+async def set_sharepoint_settings(payload: Dict[str, Any] = Body(...)):
+    """Update SharePoint settings in .env. Secret is write-only."""
+    env_path = BASE_DIR / ".env"
+
+    client_id = _strip_wrapping_quotes(payload.get("client_id") or "")
+    tenant = _strip_wrapping_quotes(payload.get("tenant") or "")
+    secret = _strip_wrapping_quotes(payload.get("secret") or "")
+    link = _strip_wrapping_quotes(payload.get("link") or "")
+    folder = _strip_wrapping_quotes(payload.get("folder") or "")
+
+    poll_interval_raw = payload.get("poll_interval")
+    poll_interval_str = _strip_wrapping_quotes(str(poll_interval_raw)) if poll_interval_raw is not None else ""
+    poll_interval = ""
+    if poll_interval_str != "":
+        try:
+            poll_interval = str(max(1, int(float(poll_interval_str))))
+        except Exception:
+            raise HTTPException(status_code=400, detail="poll_interval must be an integer >= 1")
+
+    updates: Dict[str, str] = {
+        # User-provided 6 keys
+        "SHAREPOINT_CLIENT_ID": client_id,
+        "SHAREPOINT_TENANT": tenant,
+        "SHAREPOINT_LINK": link,
+        "SHAREPOINT_FOLDER": folder,
+    }
+    if poll_interval != "":
+        updates["SHAREPOINT_POLL_INTERVAL"] = poll_interval
+
+    # Only overwrite secret if user provided a non-empty value
+    if secret != "":
+        updates["SHAREPOINT_SECRET"] = secret
+        # Also keep legacy key in sync for code that expects it
+        updates["SHAREPOINT_CLIENT_SECRET"] = secret
+
+    # Keep legacy keys in sync for existing SharePoint client code
+    if tenant:
+        updates["SHAREPOINT_TENANT_ID"] = tenant
+
+    derived_site_url = _derive_sharepoint_site_url(link)
+    if derived_site_url:
+        updates["SHAREPOINT_SITE_URL"] = derived_site_url
+
+    _write_dotenv_updates(env_path, updates)
+
+    # Reload process environment so changes take effect without restart
+    load_dotenv(dotenv_path=str(env_path), override=True)
+    try:
+        sharepoint_service.reload_from_env()
+    except Exception:
+        # If reload fails, the settings are still saved; user can restart the app.
+        pass
+
+    # Never return secret
+    current = dict(dotenv_values(env_path)) if env_path.exists() else {}
+    secret_set = bool(
+        _strip_wrapping_quotes(current.get("SHAREPOINT_SECRET") or current.get("SHAREPOINT_CLIENT_SECRET") or "")
+    )
+    return {"status": "ok", "secret_set": secret_set}
+
+
+@app.get("/api/runtime_status")
+async def runtime_status():
+    """提供前端顯示用的「實際運行狀態」：MinerU / CSV / AI（不包含敏感資訊）"""
+    mineru = mineru_service.get_runtime_status()
+
+    ai_client_ready = bool(azure_ai_service.client)
+    ai_service = azure_ai_service.ai_service or AI_SERVICE
+
+    # 提取方式：若選了 azure_openai_json 但 AI client 未初始化，實際會回退到 mineru_json
+    configured_csv = JSON_GENERATION_METHOD
+    effective_csv = configured_csv
+    csv_fallback = None
+    if configured_csv == "azure_openai_csv" and not ai_client_ready:
+        effective_csv = "mineru_csv"
+        csv_fallback = "azure_openai_csv -> mineru_csv（AI 未初始化）"
+
+    return {
+        "mineru": mineru,
+        "csv": {
+            "configured_method": configured_csv,
+            "effective_method": effective_csv,
+            "fallback": csv_fallback,
+        },
+        "ai": {
+            "service": ai_service,
+            "ready": ai_client_ready,
+            "azure_deployment": getattr(azure_ai_service, "deployment_name", None) if ai_service != "ollama" else None,
+            "ollama_model": getattr(azure_ai_service, "ollama_model", None) if ai_service == "ollama" else None,
+            "temperature": (
+                float(getattr(azure_ai_service, "ollama_temperature", OLLAMA_TEMPERATURE))
+                if ai_service == "ollama"
+                else float(getattr(azure_ai_service, "azure_openai_temperature", AZURE_OPENAI_TEMPERATURE))
+            ),
+        },
+    }
+
+
+@app.post("/api/upload")
+async def upload_pdf(
+    file: UploadFile = File(...),
+    generate_csv: Optional[str] = Form(None),
+    task_id: Optional[str] = Form(None),
+    output_format: Optional[str] = Form(None),
+    system_prompt: Optional[str] = Form(None),
+    user_prompt: Optional[str] = Form(None),
+):
+    """上傳並處理 PDF 或 JSON 檔案
+    
+    Args:
+        file: 上傳的 PDF 或 JSON 檔案
+        generate_csv: 是否生成 CSV（可選，預設為不生成 CSV）。
+                 - "true" 或 "1" 表示啟用
+                 - "false" 或 "0" 表示停用
+                 - 如果未提供，預設不生成 CSV（使用 generate_csv=true 以啟用）
+    """
+    try:
+        import json
+        
+        if DEBUG:
+            print(f"[UPLOAD] 收到上傳請求: {file.filename}")
+            print(f"[UPLOAD] task_id: {task_id}")
+            print(f"[UPLOAD] generate_csv 參數: {generate_csv}")
+        
+        # 決定是否生成附加表格輸出（優先使用請求參數，否則預設不生成）
+        should_generate_csv = False
+        if generate_csv is not None:
+            should_generate_csv = generate_csv.lower() in ("true", "1", "yes", "on")
+            if DEBUG:
+                print(f"[OUTPUT_CONTROL] 請求參數 generate_csv={generate_csv}, 解析為: {should_generate_csv}")
+        else:
+            if DEBUG:
+                print(f"[OUTPUT_CONTROL] 未提供 generate_csv 參數，預設不生成表格輸出 (use generate_csv to enable)")
+        
+        # 生成基於原始文件名的安全名稱
+        base_name = sanitize_filename(file.filename)
+        
+        # 儲存上傳的檔案（仍使用 UUID 前綴以避免衝突）
+        file_id = str(uuid.uuid4())
+        file_path = UPLOAD_DIR / f"{file_id}_{file.filename}"
+        
+        with open(file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        
+        # 檢查文件類型
+        file_extension = Path(file.filename).suffix.lower()
+        
+        # 支援 .json, .pdf
+        if file_extension == ".json":
+            # 如果是 JSON 文件，直接讀取並跳過 MinerU 處理
+            if DEBUG:
+                print(f"[JSON_UPLOAD] 檢測到 JSON 文件，跳過 MinerU 處理: {file.filename}")
+            
+            try:
+                async def run_json_job():
+                    if task_id:
+                        await progress_manager.send_progress(task_id, 6, "讀取 JSON…", "json_read")
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        mineru_json = json.load(f)
+
+                    if DEBUG:
+                        print(f"[JSON_UPLOAD] JSON 文件讀取成功，直接交給 AI/程序生成 JSON")
+
+                    # 輸出固定為 JSON
+                    final_output_format = "json"
+
+                    # Always produce JSON output even if table output is disabled.
+                    # generate_csv controls whether a table/CSV file is produced, not JSON.
+                    produce_json = True
+
+                    if should_generate_csv or final_output_format == "json":
+                        async def csv_progress_callback(p, msg, stage):
+                            if task_id:
+                                await progress_manager.send_progress(task_id, 20 + int(p * 0.75), msg, stage)
+                        if task_id:
+                            await progress_manager.send_progress(task_id, 20, "生成 JSON 中…", "csv_start")
+                        if DEBUG:
+                            print(f"[JSON_GENERATION] 開始生成 JSON（從 JSON）: {base_name}")
+                        # 選擇輸出文件副檔名
+                        if final_output_format == "json":
+                            out_path = get_unique_json_path(base_name, JSON_OUTPUT_DIR)
+                        else:
+                            out_path = CSV_OUTPUT_DIR / f"{base_name}.csv"
+                        out_path = get_unique_csv_path(base_name, CSV_OUTPUT_DIR) if final_output_format != "json" else out_path
+                        output_path_local = await azure_ai_service.generate_csv_from_json(
+                            mineru_json,
+                            out_path,
+                            progress_callback=csv_progress_callback if task_id else None,
+                            output_format=final_output_format,
+                            system_prompt_override=system_prompt,
+                            user_prompt_override=user_prompt,
+                        )
+                        if task_id:
+                            await progress_manager.send_progress(task_id, 100, "完成", "complete")
+                        return {"output_path": str(output_path_local)}
+                    else:
+                        # Should not reach here because final_output_format == "json" triggers generation above.
+                        if task_id:
+                            await progress_manager.send_progress(task_id, 100, "完成（已停用 CSV）", "complete")
+                        return {"csv_path": None}
+
+                # 入隊：逐個處理（避免多人同時跑 AI/MinerU）
+                pq: ProcessingQueue = app.state.processing_queue
+                result = await pq.enqueue(f"JSON:{base_name}", task_id, run_json_job)
+                output_path = Path(result["output_path"]) if result.get("output_path") else None
+                
+                response_data = {
+                    "status": "success",
+                    "file_id": file_id,
+                    "filename": base_name,
+                    "message": "JSON 處理完成",
+                    "file_type": "json",
+                    "needs_ocr": False,  # JSON 文件不需要 OCR
+                    "json_available": True,
+                    "generate_csv": should_generate_csv
+                }
+
+                # JSON output is always produced; provide a JSON download link.
+                if output_path:
+                    response_data["output_path"] = str(output_path)
+                    response_data["json_filename"] = output_path.name
+                    response_data["download_url"] = f"/api/download/{output_path.stem}"
+
+                if not should_generate_csv:
+                    response_data["message"] = "JSON 處理完成"
+                
+                return JSONResponse(content=response_data)
+                
+            except json.JSONDecodeError as e:
+                raise HTTPException(status_code=400, detail=f"JSON 文件格式錯誤: {str(e)}")
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"處理 JSON 文件時發生錯誤: {str(e)}")
+        
+        elif file_extension == ".pdf":
+            # 如果是 PDF 文件，使用現有流程
+            if DEBUG:
+                print(f"[PDF_UPLOAD] 檢測到 PDF 文件，使用標準處理流程: {file.filename}")
+            
+            # 使用提供的 task_id 或生成新的
+            if not task_id:
+                task_id = str(uuid.uuid4())
+                if DEBUG:
+                    print(f"[PDF_UPLOAD] 未提供 task_id，生成新的: {task_id}")
+            else:
+                if DEBUG:
+                    print(f"[PDF_UPLOAD] 使用提供的 task_id: {task_id}")
+            
+            pq: ProcessingQueue = app.state.processing_queue
+            result = await pq.enqueue(
+                f"PDF:{base_name}",
+                task_id,
+                lambda: process_pdf_file(file_path, file_id, base_name, should_generate_csv, task_id, output_format, system_prompt, user_prompt),
+            )
+            
+            response_data = {
+                "status": "success",
+                "file_id": file_id,
+                "filename": base_name,
+                "message": "PDF 處理完成",
+                "file_type": "pdf",
+                "needs_ocr": result.get("needs_ocr"),
+                "json_available": result.get("json_available", False),
+                "generate_csv": should_generate_csv
+            }
+            
+            if should_generate_csv and result.get("csv_path"):
+                response_data["csv_path"] = result.get("csv_path")
+                csv_path_obj = Path(result.get("csv_path"))
+                response_data["csv_filename"] = csv_path_obj.name
+                response_data["download_url"] = f"/api/download/{csv_path_obj.stem}"
+            else:
+                # Even when table/CSV output is disabled, JSON is still produced.
+                out_path = result.get("output_path") or result.get("csv_path")
+                if out_path:
+                    out_obj = Path(out_path)
+                    response_data["output_path"] = str(out_obj)
+                    response_data["json_filename"] = out_obj.name
+                    response_data["download_url"] = f"/api/download/{out_obj.stem}"
+                response_data["message"] = "PDF 處理完成"
+            
+            return JSONResponse(content=response_data)
+        
+        else:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"不支援的文件類型: {file_extension}。請上傳 PDF 或 JSON 文件。"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"處理錯誤: {str(e)}")
+
+
+@app.post("/api/process-sharepoint")
+async def process_sharepoint(
+    file_url: str = Form(...),
+    folder_path: Optional[str] = Form(None),
+    generate_csv: Optional[str] = Form(None)
+):
+    """從 SharePoint 處理 PDF
+    
+    Args:
+        file_url: SharePoint 檔案 URL 或相對路徑
+        folder_path: SharePoint 資料夾路徑（可選）
+        generate_csv: 是否生成 CSV（可選，預設為不生成 CSV）
+    """
+    try:
+        # Reload SharePoint settings so updated .env values take effect
+        env_path = BASE_DIR / ".env"
+        try:
+            load_dotenv(dotenv_path=str(env_path), override=True)
+        except Exception:
+            pass
+        sharepoint_service.reload_from_env()
+
+        # 決定是否生成附加表格輸出（優先使用請求參數，否則預設不生成）
+        should_generate_csv = False
+        if generate_csv is not None:
+            should_generate_csv = generate_csv.lower() in ("true", "1", "yes", "on")
+            if DEBUG:
+                print(f"[OUTPUT_CONTROL] 請求參數 generate_csv={generate_csv}, 解析為: {should_generate_csv}")
+        
+        # 從 SharePoint 下載檔案
+        file_path = await sharepoint_service.download_file(file_url, folder_path)
+        
+        file_id = str(uuid.uuid4())
+        base_name = sanitize_filename(file_path.name)
+        
+        # 入隊：逐個處理
+        pq: ProcessingQueue = app.state.processing_queue
+        result = await pq.enqueue(
+            f"SharePoint:{base_name}",
+            None,
+            lambda: process_pdf_file(file_path, file_id, base_name, should_generate_csv, None, None, None, None),
+        )
+        
+        response_data = {
+            "status": "success",
+            "file_id": file_id,
+            "filename": base_name,
+            "message": "SharePoint PDF 處理完成",
+            "needs_ocr": result.get("needs_ocr"),
+            "json_available": result.get("json_available", False),
+            "generate_csv": should_generate_csv
+        }
+        
+        if should_generate_csv and result.get("csv_path"):
+            response_data["csv_path"] = result.get("csv_path")
+            csv_path_obj = Path(result.get("csv_path"))
+            response_data["csv_filename"] = csv_path_obj.name
+            response_data["download_url"] = f"/api/download/{csv_path_obj.stem}"
+        else:
+            out_path = result.get("output_path") or result.get("csv_path")
+            if out_path:
+                out_obj = Path(out_path)
+                response_data["output_path"] = str(out_obj)
+                response_data["json_filename"] = out_obj.name
+                response_data["download_url"] = f"/api/download/{out_obj.stem}"
+            response_data["message"] = "SharePoint PDF 處理完成"
+        
+        return JSONResponse(content=response_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"處理錯誤: {str(e)}")
+
+
+@app.get("/api/sharepoint/browse")
+async def browse_sharepoint(folder_path: Optional[str] = None):
+    """Browse a SharePoint folder (subfolders + files) for the frontend folder picker."""
+    try:
+        # Reload SharePoint settings so updated .env values take effect
+        env_path = BASE_DIR / ".env"
+        try:
+            load_dotenv(dotenv_path=str(env_path), override=True)
+        except Exception:
+            pass
+        sharepoint_service.reload_from_env()
+
+        # Default to configured folder; fallback to root
+        default_folder = os.getenv("SHAREPOINT_FOLDER") or "/"
+        path = (folder_path or "").strip() or default_folder.strip() or "/"
+
+        # Graph HTTP calls are synchronous; run in a thread to avoid blocking the event loop.
+        data = await asyncio.to_thread(sharepoint_service.browse_folder, path)
+        return JSONResponse(content=data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sharepoint/tree")
+async def sharepoint_tree(
+    folder_path: Optional[str] = None,
+    depth: int = 4,
+    include_files: bool = False,
+    max_nodes: int = 1500,
+):
+    """Return a depth-limited SharePoint folder tree for frontend display."""
+    try:
+        # Reload SharePoint settings so updated .env values take effect
+        env_path = BASE_DIR / ".env"
+        try:
+            load_dotenv(dotenv_path=str(env_path), override=True)
+        except Exception:
+            pass
+        sharepoint_service.reload_from_env()
+
+        default_folder = os.getenv("SHAREPOINT_FOLDER") or "/"
+        path = (folder_path or "").strip() or default_folder.strip() or "/"
+
+        data = await asyncio.to_thread(
+            sharepoint_service.get_folder_tree,
+            path,
+            depth=int(depth),
+            include_files=bool(include_files),
+            max_nodes=int(max_nodes),
+        )
+        return JSONResponse(content=data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sharepoint/validate")
+async def validate_sharepoint(folder_path: Optional[str] = None):
+    """Validate SharePoint credentials + basic access and return a UI-friendly diagnosis."""
+    try:
+        env_path = BASE_DIR / ".env"
+        try:
+            load_dotenv(dotenv_path=str(env_path), override=True)
+        except Exception:
+            pass
+        sharepoint_service.reload_from_env()
+        result = await asyncio.to_thread(sharepoint_service.validate_connection, folder_path)
+
+        if not isinstance(result, dict):
+            return JSONResponse(content={"ok": False, "error": {"message": "Unexpected validation result"}})
+
+        if not result.get("ok"):
+            msg = str((result.get("error") or {}).get("message") or "")
+            code = _extract_aadsts_code(msg)
+            hint = _aadsts_hint(code)
+            if hint:
+                result.setdefault("error", {})
+                result["error"]["aadsts_code"] = code
+                result["error"]["hint"] = hint
+            elif code:
+                result.setdefault("error", {})
+                result["error"]["aadsts_code"] = code
+            return JSONResponse(content=result)
+
+        return JSONResponse(content=result)
+    except Exception as e:
+        msg = str(e)
+        code = _extract_aadsts_code(msg)
+        payload = {"ok": False, "error": {"message": msg}}
+        if code:
+            payload["error"]["aadsts_code"] = code
+            hint = _aadsts_hint(code)
+            if hint:
+                payload["error"]["hint"] = hint
+        return JSONResponse(content=payload)
+
+
+@app.post("/api/process-folder")
+async def process_folder(
+    folder_path: str = Form(...),
+    generate_csv: Optional[str] = Form(None)
+):
+    """從 Windows 資料夾處理 PDF
+    
+    Args:
+        folder_path: Windows 資料夾路徑
+        generate_csv: 是否生成 CSV（可選，預設為不生成 CSV）
+    """
+    try:
+        # 決定是否生成附加表格輸出（優先使用請求參數，否則預設不生成）
+        should_generate_csv = False
+        if generate_csv is not None:
+            should_generate_csv = generate_csv.lower() in ("true", "1", "yes", "on")
+            if DEBUG:
+                print(f"[OUTPUT_CONTROL] 請求參數 generate_csv={generate_csv}, 解析為: {should_generate_csv}")
+        
+        # 從資料夾讀取所有 PDF
+        pdf_files = folder_service.get_pdf_files(folder_path)
+        
+        async def run_folder_job():
+            results_local = []
+            for pdf_path in pdf_files:
+                file_id = str(uuid.uuid4())
+                base_name = sanitize_filename(Path(pdf_path).name)
+                result = await process_pdf_file(pdf_path, file_id, base_name, should_generate_csv, None, None, None, None)
+                result_item = {
+                    "file_id": file_id,
+                    "filename": base_name,
+                    "original_filename": Path(pdf_path).name,
+                    "needs_ocr": result.get("needs_ocr"),
+                    "json_available": result.get("json_available", False),
+                    "generate_csv": should_generate_csv
+                }
+                if should_generate_csv and result.get("csv_path"):
+                    result_item["csv_path"] = result.get("csv_path")
+                    csv_path_obj = Path(result.get("csv_path"))
+                    result_item["csv_filename"] = csv_path_obj.name
+                    result_item["download_url"] = f"/api/download/{csv_path_obj.stem}"
+                else:
+                    out_path = result.get("output_path") or result.get("csv_path")
+                    if out_path:
+                        out_obj = Path(out_path)
+                        result_item["output_path"] = str(out_obj)
+                        result_item["json_filename"] = out_obj.name
+                        result_item["download_url"] = f"/api/download/{out_obj.stem}"
+                results_local.append(result_item)
+            return results_local
+
+        # 入隊：逐個處理（整個資料夾當一個 job）
+        pq: ProcessingQueue = app.state.processing_queue
+        results = await pq.enqueue(
+            f"Folder:{Path(folder_path).name}",
+            None,
+            run_folder_job,
+        )
+        
+        return JSONResponse(content={
+            "status": "success",
+            "message": f"已處理 {len(results)} 個 PDF 檔案",
+            "generate_csv": should_generate_csv,
+            "results": results
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"處理錯誤: {str(e)}")
+
+
+@app.get("/api/download/{filename}")
+async def download_output(filename: str):
+    """下載生成的輸出檔案（JSON 優先，CSV 向後相容；使用文件名而非 UUID）"""
+    # 優先嘗試 JSON，若找不到再嘗試 CSV（向後相容）
+    json_path = JSON_OUTPUT_DIR / f"{filename}.json"
+    if json_path.exists():
+        return FileResponse(path=json_path, filename=json_path.name, media_type="application/json")
+
+    # Backward compatibility: older runs may have written JSON into OUTPUT_DIR.
+    legacy_json_path = OUTPUT_DIR / f"{filename}.json"
+    if legacy_json_path.exists():
+        return FileResponse(path=legacy_json_path, filename=legacy_json_path.name, media_type="application/json")
+
+    csv_path = CSV_OUTPUT_DIR / f"{filename}.csv"
+    if csv_path.exists():
+        return FileResponse(path=csv_path, filename=csv_path.name, media_type="text/csv")
+
+    # Backward compatibility: some older runs may have written CSV into OUTPUT_DIR.
+    legacy_csv_path = OUTPUT_DIR / f"{filename}.csv"
+    if legacy_csv_path.exists():
+        return FileResponse(path=legacy_csv_path, filename=legacy_csv_path.name, media_type="text/csv")
+
+    # 嘗試查找匹配的 JSON 或 CSV（處理帶數字後綴的情況）
+    matching_json = list(JSON_OUTPUT_DIR.glob(f"{filename}*.json"))
+    if matching_json:
+        return FileResponse(path=matching_json[0], filename=matching_json[0].name, media_type="application/json")
+
+    matching_legacy_json = list(OUTPUT_DIR.glob(f"{filename}*.json"))
+    if matching_legacy_json:
+        return FileResponse(path=matching_legacy_json[0], filename=matching_legacy_json[0].name, media_type="application/json")
+
+    matching_csv = list(CSV_OUTPUT_DIR.glob(f"{filename}*.csv"))
+    if matching_csv:
+        return FileResponse(path=matching_csv[0], filename=matching_csv[0].name, media_type="text/csv")
+
+    matching_legacy_csv = list(OUTPUT_DIR.glob(f"{filename}*.csv"))
+    if matching_legacy_csv:
+        return FileResponse(path=matching_legacy_csv[0], filename=matching_legacy_csv[0].name, media_type="text/csv")
+
+    raise HTTPException(status_code=404, detail=f"輸出檔案不存在: {filename}.json 或 {filename}.csv")
+
+
+async def process_pdf_file(
+    file_path: Path, 
+    file_id: str, 
+    base_name: str = None, 
+    generate_csv: bool = None,
+    task_id: str = None,
+    output_format: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+    user_prompt: Optional[str] = None,
+) -> dict:
+    """處理 PDF 檔案的完整流程
+    
+    Args:
+        file_path: PDF 檔案路徑
+        file_id: 檔案 ID（用於內部追蹤）
+        base_name: 基礎文件名（用於生成 CSV）
+        generate_csv: 是否生成 CSV（None 表示使用預設值，預設為不生成 CSV）
+        task_id: WebSocket 任務 ID（用於進度更新）
+    """
+    try:
+        # 如果沒有提供 base_name，從 file_path 生成
+        if base_name is None:
+            base_name = sanitize_filename(file_path.name)
+        
+        # 決定是否生成附加表格輸出（優先使用請求參數，否則預設不生成）
+        should_generate_csv = False if generate_csv is None else generate_csv
+        
+        # 發送初始進度
+        if task_id:
+            print(f"[OUTPUT_CONTROL] 請求參數 generate_csv={generate_csv}, 解析為: {should_generate_csv}")
+        
+        # 步驟 1: 檢查 PDF 是否需要 OCR（除非強制 OCR）
+        if task_id:
+            await progress_manager.send_progress(task_id, 10, "檢查檔案…", "check_format")
+        
+        if FORCE_OCR:
+            if DEBUG:
+                print(f"[FORCE_OCR] 強制執行 OCR，跳過檢查: {file_path}")
+            needs_ocr = True
+        else:
+            if task_id:
+                await progress_manager.send_progress(task_id, 15, "分析內容…", "analyze_pdf")
+            needs_ocr = await pdf_processor.needs_ocr(file_path)
+        
+        # 步驟 2: 如果需要 OCR，使用 MinerU 處理
+        if needs_ocr:
+            if DEBUG:
+                print(f"[OCR_PROCESS] 使用 MinerU 進行 OCR 處理: {file_path}")
+            if task_id:
+                await progress_manager.send_progress(task_id, 20, "文字辨識中…", "ocr_start")
+            # 傳遞進度回調給 MinerU 服務
+            async def mineru_progress_callback(p, msg, stage):
+                if task_id:
+                    # 將 MinerU 的進度 (0-100) 映射到總進度的 20-70% 範圍
+                    total_progress = 20 + int(p * 0.5)
+                    await progress_manager.send_progress(task_id, total_progress, msg, stage)
+            
+            try:
+                mineru_json = await mineru_service.process_pdf(
+                    file_path,
+                    progress_callback=mineru_progress_callback if task_id else None
+                )
+            except Exception as e:
+                # MinerU 失敗：回退到「純文字提取」避免生成空/假資料 CSV
+                if DEBUG:
+                    print(f"[OCR_PROCESS] MinerU 失敗，回退到純文字提取: {e}")
+                if task_id:
+                    await progress_manager.send_progress(task_id, 35, "MinerU 失敗，改用文字提取…", "ocr_fallback")
+                mineru_json = await pdf_processor.extract_text_to_json(file_path)
+        else:
+            if DEBUG:
+                print(f"[TEXT_EXTRACT] 直接提取文字（不需要 OCR）: {file_path}")
+            if task_id:
+                await progress_manager.send_progress(task_id, 30, "整理文字…", "extract_text")
+            # 如果不需要 OCR，直接提取文字
+            mineru_json = await pdf_processor.extract_text_to_json(file_path)
+
+        # Always write extracted JSON to JSON_OUTPUT_DIR so JSON is available even if table/CSV output is disabled
+        try:
+            out_json_path = get_unique_json_path(f"{base_name}_mineru", JSON_OUTPUT_DIR)
+            with open(out_json_path, "w", encoding="utf-8") as jf:
+                json.dump(mineru_json, jf, ensure_ascii=False, indent=2)
+
+            if DEBUG:
+                print(f"[MINERU_OUTPUT] ✓ Extracted JSON saved: {out_json_path}")
+        except Exception as e:
+            # Non-fatal: continue with AI generation even if saving extracted JSON fails
+            out_json_path = None
+            if DEBUG:
+                print(f"[MINERU_OUTPUT] ⚠ Failed to save extracted JSON: {e}")
+
+        # Step 3: Generate final structured output (JSON by default; CSV only for backward compatibility)
+        if task_id:
+            await progress_manager.send_progress(task_id, 70, "生成結構化輸出…", "generate_output")
+
+        async def ai_progress_callback(p: int, msg: str, stage: str):
+            if not task_id:
+                return
+            try:
+                # Map AI progress (0-100) into 70-98 range
+                total_progress = 70 + int(max(0, min(100, int(p))) * 0.28)
+                await progress_manager.send_progress(task_id, total_progress, msg, stage)
+            except Exception:
+                pass
+
+        try:
+            if should_generate_csv:
+                out_path = get_unique_csv_path(base_name, CSV_OUTPUT_DIR)
+            else:
+                out_path = get_unique_json_path(base_name, JSON_OUTPUT_DIR)
+
+            final_path = await azure_ai_service.generate_csv_from_json(
+                mineru_json,
+                out_path,
+                progress_callback=ai_progress_callback if task_id else None,
+                output_format=output_format or "json",
+                system_prompt_override=system_prompt,
+                user_prompt_override=user_prompt,
+            )
+
+            if task_id:
+                await progress_manager.send_progress(task_id, 100, "完成", "done")
+
+            result: Dict[str, Any] = {
+                "needs_ocr": needs_ocr,
+                "json_available": True,
+            }
+            if out_json_path:
+                result["mineru_output_path"] = str(out_json_path)
+
+            if should_generate_csv:
+                result["csv_path"] = str(final_path)
+            else:
+                result["output_path"] = str(final_path)
+
+            return result
+
+        except Exception as e:
+            # If AI output generation fails, return extracted JSON if we have it.
+            if DEBUG:
+                print(f"[JSON_GENERATION] ✗ Output generation failed: {e}")
+            if task_id:
+                await progress_manager.send_progress(task_id, 95, "輸出生成失敗（回退到提取內容）", "output_fallback")
+
+            if out_json_path:
+                return {
+                    "needs_ocr": needs_ocr,
+                    "json_available": True,
+                    "output_path": str(out_json_path),
+                    "fallback": "mineru_json",
+                }
+            raise
+
+    except Exception as e:
+        if DEBUG:
+            print(f"[PROCESS_PDF] ✗ Processing failed: {e}")
+        raise
