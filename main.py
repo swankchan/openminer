@@ -27,6 +27,7 @@ from config import (
     JSON_OUTPUT_DIR,
     OUTPUT_DIR,
     CSV_OUTPUT_DIR,
+    GENERATE_TEMPLATE_CSV,
     FORCE_OCR,
     DEBUG,
     JSON_GENERATION_METHOD,
@@ -726,7 +727,6 @@ async def runtime_status():
 @app.post("/api/upload")
 async def upload_pdf(
     file: UploadFile = File(...),
-    generate_csv: Optional[str] = Form(None),
     task_id: Optional[str] = Form(None),
     output_format: Optional[str] = Form(None),
     mineru_json_variant: Optional[str] = Form(None),
@@ -737,10 +737,7 @@ async def upload_pdf(
     
     Args:
         file: 上傳的 PDF 或 JSON 檔案
-        generate_csv: 是否生成 CSV（可選，預設為不生成 CSV）。
-                 - "true" 或 "1" 表示啟用
-                 - "false" 或 "0" 表示停用
-                 - 如果未提供，預設不生成 CSV（使用 generate_csv=true 以啟用）
+        會固定產生 JSON 輸出；是否額外產生 template CSV 由 .env 的 GENERATE_TEMPLATE_CSV 控制。
     """
     try:
         import json
@@ -748,17 +745,6 @@ async def upload_pdf(
         if DEBUG:
             print(f"[UPLOAD] 收到上傳請求: {file.filename}")
             print(f"[UPLOAD] task_id: {task_id}")
-            print(f"[UPLOAD] generate_csv 參數: {generate_csv}")
-        
-        # 決定是否生成附加表格輸出（優先使用請求參數，否則預設不生成）
-        should_generate_csv = False
-        if generate_csv is not None:
-            should_generate_csv = generate_csv.lower() in ("true", "1", "yes", "on")
-            if DEBUG:
-                print(f"[OUTPUT_CONTROL] 請求參數 generate_csv={generate_csv}, 解析為: {should_generate_csv}")
-        else:
-            if DEBUG:
-                print(f"[OUTPUT_CONTROL] 未提供 generate_csv 參數，預設不生成表格輸出 (use generate_csv to enable)")
         
         if not file or not file.filename:
             raise HTTPException(status_code=400, detail="Missing upload file")
@@ -796,11 +782,7 @@ async def upload_pdf(
                     # 輸出固定為 JSON
                     final_output_format = "json"
 
-                    # Always produce JSON output even if table output is disabled.
-                    # generate_csv controls whether a table/CSV file is produced, not JSON.
-                    produce_json = True
-
-                    if should_generate_csv or final_output_format == "json":
+                    if True:
                         async def csv_progress_callback(p, msg, stage):
                             if task_id:
                                 await progress_manager.send_progress(task_id, 20 + int(p * 0.75), msg, stage)
@@ -808,12 +790,7 @@ async def upload_pdf(
                             await progress_manager.send_progress(task_id, 20, "生成 JSON 中…", "csv_start")
                         if DEBUG:
                             print(f"[JSON_GENERATION] 開始生成 JSON（從 JSON）: {base_name}")
-                        # 選擇輸出文件副檔名
-                        if final_output_format == "json":
-                            out_path = get_unique_json_path(base_name, JSON_OUTPUT_DIR)
-                        else:
-                            out_path = CSV_OUTPUT_DIR / f"{base_name}.csv"
-                        out_path = get_unique_csv_path(base_name, CSV_OUTPUT_DIR) if final_output_format != "json" else out_path
+                        out_path = get_unique_json_path(base_name, JSON_OUTPUT_DIR)
                         output_path_local = await azure_ai_service.generate_csv_from_json(
                             mineru_json,
                             out_path,
@@ -825,11 +802,7 @@ async def upload_pdf(
                         if task_id:
                             await progress_manager.send_progress(task_id, 100, "完成", "complete")
                         return {"output_path": str(output_path_local)}
-                    else:
-                        # Should not reach here because final_output_format == "json" triggers generation above.
-                        if task_id:
-                            await progress_manager.send_progress(task_id, 100, "完成（已停用 CSV）", "complete")
-                        return {"csv_path": None}
+                    
 
                 # 入隊：逐個處理（避免多人同時跑 AI/MinerU）
                 pq: ProcessingQueue = app.state.processing_queue
@@ -844,7 +817,7 @@ async def upload_pdf(
                     "file_type": "json",
                     "needs_ocr": False,  # JSON 文件不需要 OCR
                     "json_available": True,
-                    "generate_csv": should_generate_csv
+                    "generate_template_csv": bool(GENERATE_TEMPLATE_CSV)
                 }
 
                 # JSON output is always produced; provide a JSON download link.
@@ -853,9 +826,6 @@ async def upload_pdf(
                     response_data["json_filename"] = output_path.name
                     response_data["download_url"] = f"/api/download/{output_path.stem}"
 
-                if not should_generate_csv:
-                    response_data["message"] = "JSON 處理完成"
-                
                 return JSONResponse(content=response_data)
                 
             except json.JSONDecodeError as e:
@@ -882,15 +852,14 @@ async def upload_pdf(
                 f"PDF:{base_name}",
                 task_id,
                 lambda: process_pdf_file(
-                    file_path,
-                    file_id,
-                    base_name,
-                    should_generate_csv,
-                    task_id,
-                    output_format,
-                    system_prompt,
-                    user_prompt,
-                    mineru_json_variant,
+                    file_path=file_path,
+                    file_id=file_id,
+                    base_name=base_name,
+                    task_id=task_id,
+                    output_format=output_format,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    mineru_json_variant=mineru_json_variant,
                 ),
             )
             
@@ -902,7 +871,7 @@ async def upload_pdf(
                 "file_type": "pdf",
                 "needs_ocr": result.get("needs_ocr"),
                 "json_available": result.get("json_available", False),
-                "generate_csv": should_generate_csv
+                "generate_template_csv": bool(GENERATE_TEMPLATE_CSV)
             }
 
             # If a searchable PDF was generated, expose a direct download URL for it.
@@ -915,20 +884,18 @@ async def upload_pdf(
                 except Exception:
                     pass
             
-            if should_generate_csv and result.get("csv_path"):
-                response_data["csv_path"] = result.get("csv_path")
-                csv_path_obj = Path(result.get("csv_path"))
-                response_data["csv_filename"] = csv_path_obj.name
-                response_data["download_url"] = f"/api/download/{csv_path_obj.stem}"
-            else:
-                # Even when table/CSV output is disabled, JSON is still produced.
-                out_path = result.get("output_path") or result.get("csv_path")
-                if out_path:
-                    out_obj = Path(out_path)
-                    response_data["output_path"] = str(out_obj)
-                    response_data["json_filename"] = out_obj.name
-                    response_data["download_url"] = f"/api/download/{out_obj.stem}"
-                response_data["message"] = "PDF 處理完成"
+            out_path = result.get("output_path")
+            if out_path:
+                out_obj = Path(out_path)
+                response_data["output_path"] = str(out_obj)
+                response_data["json_filename"] = out_obj.name
+                response_data["download_url"] = f"/api/download/{out_obj.stem}"
+
+            if result.get("template_csv_path"):
+                tpath = Path(str(result.get("template_csv_path")))
+                response_data["template_csv_path"] = str(tpath)
+                response_data["template_csv_filename"] = tpath.name
+                response_data["template_csv_download_url"] = f"/api/download/{tpath.stem}"
             
             return JSONResponse(content=response_data)
         
@@ -948,7 +915,6 @@ async def upload_pdf(
 async def process_sharepoint(
     file_url: str = Form(...),
     folder_path: Optional[str] = Form(None),
-    generate_csv: Optional[str] = Form(None),
     mineru_json_variant: Optional[str] = Form(None),
 ):
     """從 SharePoint 處理 PDF
@@ -956,7 +922,7 @@ async def process_sharepoint(
     Args:
         file_url: SharePoint 檔案 URL 或相對路徑
         folder_path: SharePoint 資料夾路徑（可選）
-        generate_csv: 是否生成 CSV（可選，預設為不生成 CSV）
+        是否額外產生 template CSV 由 .env 的 GENERATE_TEMPLATE_CSV 控制。
     """
     try:
         # Reload SharePoint settings so updated .env values take effect
@@ -967,13 +933,6 @@ async def process_sharepoint(
             pass
         sharepoint_service.reload_from_env()
 
-        # 決定是否生成附加表格輸出（優先使用請求參數，否則預設不生成）
-        should_generate_csv = False
-        if generate_csv is not None:
-            should_generate_csv = generate_csv.lower() in ("true", "1", "yes", "on")
-            if DEBUG:
-                print(f"[OUTPUT_CONTROL] 請求參數 generate_csv={generate_csv}, 解析為: {should_generate_csv}")
-        
         # 從 SharePoint 下載檔案
         file_path = await sharepoint_service.download_file(file_url, folder_path)
         
@@ -985,7 +944,12 @@ async def process_sharepoint(
         result = await pq.enqueue(
             f"SharePoint:{base_name}",
             None,
-            lambda: process_pdf_file(file_path, file_id, base_name, should_generate_csv, None, None, None, None, mineru_json_variant),
+            lambda: process_pdf_file(
+                file_path=file_path,
+                file_id=file_id,
+                base_name=base_name,
+                mineru_json_variant=mineru_json_variant,
+            ),
         )
         
         response_data = {
@@ -995,7 +959,7 @@ async def process_sharepoint(
             "message": "SharePoint PDF 處理完成",
             "needs_ocr": result.get("needs_ocr"),
             "json_available": result.get("json_available", False),
-            "generate_csv": should_generate_csv
+            "generate_template_csv": bool(GENERATE_TEMPLATE_CSV)
         }
 
         if result.get("searchable_pdf_path"):
@@ -1007,19 +971,18 @@ async def process_sharepoint(
             except Exception:
                 pass
         
-        if should_generate_csv and result.get("csv_path"):
-            response_data["csv_path"] = result.get("csv_path")
-            csv_path_obj = Path(result.get("csv_path"))
-            response_data["csv_filename"] = csv_path_obj.name
-            response_data["download_url"] = f"/api/download/{csv_path_obj.stem}"
-        else:
-            out_path = result.get("output_path") or result.get("csv_path")
-            if out_path:
-                out_obj = Path(out_path)
-                response_data["output_path"] = str(out_obj)
-                response_data["json_filename"] = out_obj.name
-                response_data["download_url"] = f"/api/download/{out_obj.stem}"
-            response_data["message"] = "SharePoint PDF 處理完成"
+        out_path = result.get("output_path")
+        if out_path:
+            out_obj = Path(out_path)
+            response_data["output_path"] = str(out_obj)
+            response_data["json_filename"] = out_obj.name
+            response_data["download_url"] = f"/api/download/{out_obj.stem}"
+
+        if result.get("template_csv_path"):
+            tpath = Path(str(result.get("template_csv_path")))
+            response_data["template_csv_path"] = str(tpath)
+            response_data["template_csv_filename"] = tpath.name
+            response_data["template_csv_download_url"] = f"/api/download/{tpath.stem}"
         
         return JSONResponse(content=response_data)
     except Exception as e:
@@ -1177,23 +1140,15 @@ async def validate_sharepoint(folder_path: Optional[str] = None):
 @app.post("/api/process-folder")
 async def process_folder(
     folder_path: str = Form(...),
-    generate_csv: Optional[str] = Form(None),
     mineru_json_variant: Optional[str] = Form(None),
 ):
     """從 Windows 資料夾處理 PDF
     
     Args:
         folder_path: Windows 資料夾路徑
-        generate_csv: 是否生成 CSV（可選，預設為不生成 CSV）
+        是否額外產生 template CSV 由 .env 的 GENERATE_TEMPLATE_CSV 控制。
     """
     try:
-        # 決定是否生成附加表格輸出（優先使用請求參數，否則預設不生成）
-        should_generate_csv = False
-        if generate_csv is not None:
-            should_generate_csv = generate_csv.lower() in ("true", "1", "yes", "on")
-            if DEBUG:
-                print(f"[OUTPUT_CONTROL] 請求參數 generate_csv={generate_csv}, 解析為: {should_generate_csv}")
-        
         # 從資料夾讀取所有 PDF
         pdf_files = folder_service.get_pdf_files(folder_path)
         
@@ -1202,14 +1157,19 @@ async def process_folder(
             for pdf_path in pdf_files:
                 file_id = str(uuid.uuid4())
                 base_name = sanitize_filename(Path(pdf_path).name)
-                result = await process_pdf_file(pdf_path, file_id, base_name, should_generate_csv, None, None, None, None, mineru_json_variant)
+                result = await process_pdf_file(
+                    file_path=pdf_path,
+                    file_id=file_id,
+                    base_name=base_name,
+                    mineru_json_variant=mineru_json_variant,
+                )
                 result_item = {
                     "file_id": file_id,
                     "filename": base_name,
                     "original_filename": Path(pdf_path).name,
                     "needs_ocr": result.get("needs_ocr"),
                     "json_available": result.get("json_available", False),
-                    "generate_csv": should_generate_csv
+                    "generate_template_csv": bool(GENERATE_TEMPLATE_CSV)
                 }
                 if result.get("searchable_pdf_path"):
                     try:
@@ -1219,20 +1179,18 @@ async def process_folder(
                         result_item["searchable_pdf_download_url"] = f"/api/download/{sp.name}"
                     except Exception:
                         pass
-                if should_generate_csv and result.get("csv_path"):
-                    result_item["csv_path"] = result.get("csv_path")
-                    csv_path_str = result.get("csv_path")
-                    if csv_path_str:
-                        csv_path_obj = Path(csv_path_str)
-                        result_item["csv_filename"] = csv_path_obj.name
-                        result_item["download_url"] = f"/api/download/{csv_path_obj.stem}"
-                else:
-                    out_path = result.get("output_path") or result.get("csv_path")
-                    if out_path:
-                        out_obj = Path(out_path)
-                        result_item["output_path"] = str(out_obj)
-                        result_item["json_filename"] = out_obj.name
-                        result_item["download_url"] = f"/api/download/{out_obj.stem}"
+                out_path = result.get("output_path")
+                if out_path:
+                    out_obj = Path(out_path)
+                    result_item["output_path"] = str(out_obj)
+                    result_item["json_filename"] = out_obj.name
+                    result_item["download_url"] = f"/api/download/{out_obj.stem}"
+
+                if result.get("template_csv_path"):
+                    tpath = Path(str(result.get("template_csv_path")))
+                    result_item["template_csv_path"] = str(tpath)
+                    result_item["template_csv_filename"] = tpath.name
+                    result_item["template_csv_download_url"] = f"/api/download/{tpath.stem}"
                 results_local.append(result_item)
             return results_local
 
@@ -1247,7 +1205,7 @@ async def process_folder(
         return JSONResponse(content={
             "status": "success",
             "message": f"已處理 {len(results)} 個 PDF 檔案",
-            "generate_csv": should_generate_csv,
+            "generate_template_csv": bool(GENERATE_TEMPLATE_CSV),
             "results": results
         })
     except Exception as e:
@@ -1307,7 +1265,6 @@ async def process_pdf_file(
     file_path: Path, 
     file_id: str, 
     base_name: Optional[str] = None,
-    generate_csv: Optional[bool] = None,
     task_id: Optional[str] = None,
     output_format: Optional[str] = None,
     system_prompt: Optional[str] = None,
@@ -1320,20 +1277,14 @@ async def process_pdf_file(
         file_path: PDF 檔案路徑
         file_id: 檔案 ID（用於內部追蹤）
         base_name: 基礎文件名（用於生成 CSV）
-        generate_csv: 是否生成 CSV（None 表示使用預設值，預設為不生成 CSV）
         task_id: WebSocket 任務 ID（用於進度更新）
     """
     try:
         # 如果沒有提供 base_name，從 file_path 生成
         if base_name is None:
             base_name = sanitize_filename(file_path.name)
-        
-        # 決定是否生成附加表格輸出（優先使用請求參數，否則預設不生成）
-        should_generate_csv = False if generate_csv is None else generate_csv
-        
-        # 發送初始進度
-        if task_id:
-            print(f"[OUTPUT_CONTROL] 請求參數 generate_csv={generate_csv}, 解析為: {should_generate_csv}")
+
+        should_generate_template_csv = bool(GENERATE_TEMPLATE_CSV)
         
         # 步驟 1: 檢查 PDF 是否需要 OCR（除非強制 OCR）
         if task_id:
@@ -1523,16 +1474,13 @@ async def process_pdf_file(
                 pass
 
         try:
-            if should_generate_csv:
-                out_path = get_unique_csv_path(base_name, CSV_OUTPUT_DIR)
-            else:
-                out_path = get_unique_json_path(base_name, JSON_OUTPUT_DIR)
+            out_path = get_unique_json_path(base_name, JSON_OUTPUT_DIR)
 
             final_path = await azure_ai_service.generate_csv_from_json(
                 mineru_json,
                 out_path,
                 progress_callback=ai_progress_callback if task_id else None,
-                output_format=output_format or "json",
+                output_format="json",
                 system_prompt_override=system_prompt,
                 user_prompt_override=user_prompt,
                 image_data_urls=image_data_urls,
@@ -1550,10 +1498,32 @@ async def process_pdf_file(
             if searchable_pdf_path:
                 result["searchable_pdf_path"] = str(searchable_pdf_path)
 
-            if should_generate_csv:
-                result["csv_path"] = str(final_path)
-            else:
-                result["output_path"] = str(final_path)
+            result["output_path"] = str(final_path)
+
+            # Optional: template-based CSV output (uses OpenAI JSON + MinerU sidecar)
+            if should_generate_template_csv:
+                try:
+                    pdf_for_sidecar = searchable_pdf_path or file_path
+                    _, sidecar_path = mineru_service.find_selected_json_and_sidecar(
+                        pdf_for_sidecar,
+                        json_variant=mineru_json_variant,
+                    )
+                    if sidecar_path:
+                        from services.jsoncsv_app import generate_template_csv_file
+
+                        template_csv_out = get_unique_csv_path(f"{base_name}_template", CSV_OUTPUT_DIR)
+                        template_csv_path = generate_template_csv_file(
+                            data_json_path=Path(final_path),
+                            sidecar_json_path=Path(sidecar_path),
+                            output_path=Path(template_csv_out),
+                        )
+                        result["template_csv_path"] = str(template_csv_path)
+                    else:
+                        if DEBUG:
+                            print("[TEMPLATE_CSV] ⚠ MinerU sidecar not found; skipping template CSV")
+                except Exception as e:
+                    if DEBUG:
+                        print(f"[TEMPLATE_CSV] ⚠ Failed to generate template CSV (continuing): {e}")
 
             return result
 

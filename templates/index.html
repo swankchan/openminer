@@ -1014,14 +1014,7 @@
                 </button>
             </div>
 
-            <details class="upload-details">
-                <summary><i class="fas fa-lightbulb"></i> Tips (click to expand)</summary>
-                <div class="upload-details-body">
-                    <div><i class="fas fa-file-pdf"></i> PDF upload: run OCR (MinerU) → then ask AI to generate JSON</div>
-                    <div><i class="fas fa-brackets-curly"></i> JSON upload: skip MinerU and directly ask AI to generate JSON</div>
-                    <div><i class="fas fa-folder-open"></i> Folder choose/drag-drop: best supported in Chrome / Edge</div>
-                </div>
-            </details>
+            
 
             <!-- NOTE: Avoid display:none; some browsers ignore programmatic click() on hidden file inputs. -->
             <input type="file" id="fileInput" accept=".pdf,.json" multiple style="position:absolute; left:-10000px; width:1px; height:1px; opacity:0;" />
@@ -1030,7 +1023,7 @@
             <!-- CSV options removed: outputs are JSON only -->
             <div class="form-group">
                 <label for="systemPromptInput">System Prompt (optional override; can also be saved as default)</label>
-                <textarea id="systemPromptInput" rows="3" style="min-height:72px; width:100%;" placeholder="Leave blank to use defaults or .env settings"></textarea>
+                <textarea id="systemPromptInput" rows="20" style="min-height:72px; width:100%;" placeholder="Leave blank to use defaults or .env settings"></textarea>
             </div>
             <div class="form-group">
                 <label for="userPromptInput">User Prompt (optional override; can also be saved as default)</label>
@@ -1215,7 +1208,7 @@
 
     <footer class="footer">
         <div class="footer-text">
-            OpenMiner™ &copy; 2026 • Built with <i class="fas fa-heart" style="color:#ef4444;"></i> by HK IT Startup Company<br>
+            OpenMiner™ &copy; 2026 • Built with <i class="fas fa-heart" style="color:#ef4444;"></i> an Open Mind<br>
         </div>
     </footer>
 
@@ -2175,11 +2168,19 @@
             const folderHtml = folders.map(f => {
                 const name = f.name || f.server_relative_url || '';
                 const url = f.server_relative_url || '';
+                const created = f.created_date_time || '';
+                const modified = f.last_modified_date_time || '';
+                const metaParts = [];
+                if (modified || created) metaParts.push(`<span title="${escapeHtml(modified || created)}">${escapeHtml(formatDateTime(modified || created))}</span>`);
+                const meta = metaParts.length ? `<div style="font-size: 11px; opacity: .75; margin-top: 2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${metaParts.join(' • ')}</div>` : '';
                 return `
                     <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-radius:10px; background: rgba(255,255,255,0.55); margin-bottom:8px; cursor:pointer;" onclick="browseSharePoint('${encodeURIComponent(url)}')">
                         <div style="display:flex; align-items:center; gap:10px;">
                             <i class="fas fa-folder" style="color:#6366f1;"></i>
-                            <div style="font-weight:600;">${escapeHtml(name)}</div>
+                            <div style="min-width:0;">
+                                <div style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(name)}</div>
+                                ${meta}
+                            </div>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <button class="btn" type="button" onclick="deleteSharePointItem(event, '${encodeURIComponent(url)}')" style="padding: 10px 12px; min-width: 46px;">
@@ -2197,11 +2198,22 @@
                 const isPdf = !!f.is_pdf;
                 const icon = isPdf ? 'fa-file-pdf' : 'fa-file';
                 const color = isPdf ? '#ef4444' : '#64748b';
+                const size = (typeof f.size === 'number') ? f.size : null;
+                const created = f.created_date_time || '';
+                const modified = f.last_modified_date_time || '';
+                const metaParts = [];
+                if (created) metaParts.push(`<span title="Uploaded">Uploaded: ${escapeHtml(formatDateTime(created))}</span>`);
+                else if (modified) metaParts.push(`<span title="Modified">Modified: ${escapeHtml(formatDateTime(modified))}</span>`);
+                if (size !== null) metaParts.push(`<span title="Size">${escapeHtml(formatBytes(size))}</span>`);
+                const meta = metaParts.length ? `<div style="font-size: 11px; opacity: .75; margin-top: 2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${metaParts.join(' • ')}</div>` : '';
                 return `
                     <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-radius:10px; background: rgba(255,255,255,0.55); margin-bottom:8px;">
                         <div style="display:flex; align-items:center; gap:10px; min-width:0;">
                             <i class="fas ${icon}" style="color:${color};"></i>
-                            <div style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(name)}</div>
+                            <div style="min-width:0;">
+                                <div style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(name)}</div>
+                                ${meta}
+                            </div>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <button class="btn" type="button" onclick="deleteSharePointItem(event, '${encodeURIComponent(url)}')" style="padding: 10px 12px; min-width: 46px;">
@@ -2216,6 +2228,25 @@
             }).join('');
 
             el.innerHTML = folderHtml + fileHtml;
+        }
+
+        function formatBytes(bytes) {
+            const n = Number(bytes);
+            if (!Number.isFinite(n) || n < 0) return '';
+            if (n === 0) return '0 B';
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), units.length - 1);
+            const value = n / Math.pow(1024, i);
+            const digits = i === 0 ? 0 : (value >= 10 ? 1 : 2);
+            return `${value.toFixed(digits)} ${units[i]}`;
+        }
+
+        function formatDateTime(dt) {
+            const s = String(dt || '').trim();
+            if (!s) return '';
+            const d = new Date(s);
+            if (isNaN(d.getTime())) return s;
+            return d.toLocaleString();
         }
 
         function escapeHtml(s) {
@@ -2572,14 +2603,7 @@
                     <details class="upload-details" style="margin-top: 12px;">
                         <summary><i class="fas fa-code"></i> JSON preview</summary>
                         <div class="upload-details-body">
-                            <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                                <button class="btn" type="button" onclick="copyJsonPreview()" style="padding: 10px 12px; min-width: 120px;">
-                                    <span><i class="fas fa-copy"></i> Copy</span>
-                                </button>
-                                <a class="btn" href="${data.download_url}" target="_blank" rel="noopener" style="padding: 10px 12px; min-width: 150px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center;">
-                                    <span><i class="fas fa-arrow-up-right-from-square"></i> Open in new tab</span>
-                                </a>
-                            </div>
+                            
                             <pre id="jsonPreview" style="margin-top:10px; max-height: 520px; overflow:auto; white-space: pre; background: rgba(255,255,255,0.55); padding: 12px; border-radius: 12px; font-size: 12px;">Loading…</pre>
                             <div id="jsonPreviewNote" style="margin-top:8px; font-size:12px; opacity:.8;"></div>
                         </div>

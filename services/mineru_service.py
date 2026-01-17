@@ -22,6 +22,7 @@ from config import (
     MINERU_HEADER_ZONE_RATIO,
     MINERU_INCLUDE_PDF_TEXT_LAYER,
     MINERU_PDF_TEXT_LAYER_MAX_LINES,
+    SIDECAR_OUTPUT_DIR,
     ALLOW_MOCK_MINERU_OUTPUT,
 )
 
@@ -1120,7 +1121,16 @@ class MinerUService:
 
     @staticmethod
     def _write_mineru_sidecar(*, selected_json_file: Path, sidecar: Dict[str, Any]) -> Path:
-        sidecar_path = Path(selected_json_file).with_name(f"{Path(selected_json_file).stem}_sidecar.json")
+        stem = Path(selected_json_file).stem
+        filename = f"{stem}_sidecar.json"
+
+        # If a separate sidecar output directory is configured, write sidecars there.
+        # Otherwise, keep legacy behavior (write next to the selected JSON).
+        if SIDECAR_OUTPUT_DIR is not None:
+            sidecar_path = Path(SIDECAR_OUTPUT_DIR) / filename
+        else:
+            sidecar_path = Path(selected_json_file).with_name(filename)
+
         sidecar_path.parent.mkdir(parents=True, exist_ok=True)
         sidecar_path.write_text(json.dumps(sidecar, ensure_ascii=False, indent=2), encoding="utf-8")
         return sidecar_path
@@ -1204,3 +1214,55 @@ class MinerUService:
                     break
         
         return result
+
+    def find_selected_json_and_sidecar(
+        self,
+        pdf_path: Path,
+        json_variant: Optional[str] = None,
+    ) -> Tuple[Optional[Path], Optional[Path]]:
+        """Locate the MinerU-selected JSON file and its sidecar for a previously processed PDF.
+
+        Returns (selected_json_path, sidecar_path). Either may be None if not found.
+        """
+        try:
+            pdf_name = Path(pdf_path).stem
+            pdf_output_dir = Path(self.output_dir) / pdf_name
+
+            method_to_folder = {
+                "auto": "hybrid_auto",
+                "ocr": "hybrid_ocr",
+                "txt": "hybrid_txt",
+            }
+            hybrid_folder = method_to_folder.get(MINERU_METHOD, f"hybrid_{MINERU_METHOD}")
+
+            candidates = [pdf_output_dir / hybrid_folder, pdf_output_dir / MINERU_METHOD]
+            json_files: List[Path] = []
+            for folder in candidates:
+                if folder.exists():
+                    found = list(folder.glob("*.json"))
+                    if found:
+                        json_files = found
+                        break
+
+            if not json_files and pdf_output_dir.exists():
+                json_files = list(pdf_output_dir.rglob("*.json"))
+
+            if not json_files:
+                return None, None
+
+            selected = self._select_json_file(json_files, (json_variant or "").strip())
+            stem = Path(selected).stem
+            sidecar_name = f"{stem}_sidecar.json"
+
+            # Prefer configured sidecar output folder (if any), else legacy adjacent file.
+            candidates: List[Path] = []
+            if SIDECAR_OUTPUT_DIR is not None:
+                candidates.append(Path(SIDECAR_OUTPUT_DIR) / sidecar_name)
+            candidates.append(Path(selected).with_name(sidecar_name))
+
+            for c in candidates:
+                if c.exists():
+                    return selected, c
+            return selected, None
+        except Exception:
+            return None, None

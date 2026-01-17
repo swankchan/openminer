@@ -13,7 +13,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Load .env file (if present)
-load_dotenv()
+# Prefer .env values over any existing environment variables so
+# edits to .env take effect immediately (and later duplicates win).
+load_dotenv(override=True)
 
 def _env_clean(value: str) -> str:
     """Clean a value read from .env: remove trailing comments and extra whitespace/quotes."""
@@ -90,6 +92,50 @@ def _env_path(name: str, default: Path, base_dir: Path) -> Path:
     return p if p.is_absolute() else (base_dir / p)
 
 
+def _env_optional_path(name: str, base_dir: Path) -> Path | None:
+    """Read an optional directory path from env.
+
+    - Unset/empty -> None
+    - Relative -> resolved relative to base_dir
+    - Absolute -> used as-is
+    """
+    raw = os.getenv(name, None)
+    if raw is None:
+        return None
+    cleaned = _env_clean(raw)
+    if cleaned == "":
+        return None
+    try:
+        p = Path(cleaned).expanduser()
+    except Exception:
+        return None
+    return p if p.is_absolute() else (base_dir / p)
+
+
+def _dotenv_last_assignment(dotenv_path: Path, key: str) -> str | None:
+    """Return the last KEY=VALUE assignment from a .env file.
+
+    This is a robustness fallback for cases where the dotenv loader
+    gets tripped up by malformed lines like a bare 'KEY' with no '='.
+    """
+    try:
+        text = dotenv_path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    last: str | None = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "=" not in stripped:
+            continue
+        k, v = stripped.split("=", 1)
+        if k.strip() != key:
+            continue
+        last = _env_clean(v)
+    return last
+
+
 # Directory settings
 BASE_DIR = Path(__file__).parent
 
@@ -109,6 +155,22 @@ OUTPUT_DIR = JSON_OUTPUT_DIR
 # Defaults to JSON_OUTPUT_DIR so existing behavior stays unchanged.
 CSV_OUTPUT_DIR = _env_path("CSV_OUTPUT_DIR", JSON_OUTPUT_DIR, BASE_DIR)
 
+# Optional separate folder for MinerU sidecar JSON outputs.
+# If unset/empty, sidecars may be written next to the selected MinerU JSON (legacy behavior).
+SIDECAR_OUTPUT_DIR = _env_optional_path("SIDECAR_OUTPUT_DIR", BASE_DIR)
+if SIDECAR_OUTPUT_DIR is None:
+    _v = _dotenv_last_assignment(BASE_DIR / ".env", "SIDECAR_OUTPUT_DIR")
+    if _v:
+        try:
+            _p = Path(_v).expanduser()
+            SIDECAR_OUTPUT_DIR = _p if _p.is_absolute() else (BASE_DIR / _p)
+        except Exception:
+            SIDECAR_OUTPUT_DIR = None
+
+# Whether to generate a template-based CSV (templates/template.csv) automatically
+# after JSON extraction.
+GENERATE_TEMPLATE_CSV = _env_bool("GENERATE_TEMPLATE_CSV", False)
+
 MINERU_OUTPUT_DIR = _env_path("MINERU_OUTPUT_DIR", BASE_DIR / "mineru_outputs", BASE_DIR)
 SHAREPOINT_DOWNLOAD_DIR = _env_path("SHAREPOINT_DOWNLOAD_DIR", BASE_DIR / "sharepoint_downloads", BASE_DIR)
 STATIC_DIR = _env_path("STATIC_DIR", BASE_DIR / "static", BASE_DIR)
@@ -125,11 +187,14 @@ SEARCHABLE_PDF_TEXT_OPACITY = float(_env_str("SEARCHABLE_PDF_TEXT_OPACITY", "0.0
 # Examples:
 #   Windows: C:\\Windows\\Fonts\\arial.ttf
 #   Linux: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
-SEARCHABLE_PDF_FONT_PATH = _env_path("SEARCHABLE_PDF_FONT_PATH", None, BASE_DIR)
+SEARCHABLE_PDF_FONT_PATH = _env_optional_path("SEARCHABLE_PDF_FONT_PATH", BASE_DIR)
 
 # Create directories
 for dir_path in [UPLOAD_DIR, JSON_OUTPUT_DIR, CSV_OUTPUT_DIR, MINERU_OUTPUT_DIR, SHAREPOINT_DOWNLOAD_DIR, STATIC_DIR, SEARCHABLE_PDF_OUTPUT_DIR]:
     dir_path.mkdir(exist_ok=True)
+
+if SIDECAR_OUTPUT_DIR is not None:
+    Path(SIDECAR_OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
 
 # ============================================================================
 # Configuration (edit defaults here, or override via .env)

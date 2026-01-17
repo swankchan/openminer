@@ -455,7 +455,7 @@ class SharePointService:
 
             children = self._graph_request(
                 "GET",
-                f"/drives/{drive_id}/items/{item_id}/children?$select=name,webUrl,file,folder",
+                f"/drives/{drive_id}/items/{item_id}/children?$select=name,webUrl,file,folder,size,createdDateTime,lastModifiedDateTime",
             )
             values = list((children or {}).get("value") or [])
 
@@ -470,6 +470,8 @@ class SharePointService:
                     folder_items.append({
                         "name": name,
                         "server_relative_url": server_rel,
+                        "created_date_time": child.get("createdDateTime"),
+                        "last_modified_date_time": child.get("lastModifiedDateTime"),
                     })
                 else:
                     is_pdf = bool(name and str(name).lower().endswith(".pdf"))
@@ -477,6 +479,9 @@ class SharePointService:
                         "name": name,
                         "server_relative_url": server_rel,
                         "is_pdf": is_pdf,
+                        "size": child.get("size"),
+                        "created_date_time": child.get("createdDateTime"),
+                        "last_modified_date_time": child.get("lastModifiedDateTime"),
                     })
 
             # Sort folders/files for nicer UX
