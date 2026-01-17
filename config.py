@@ -67,6 +67,9 @@ def _env_int(name: str, default: int) -> int:
         return default
     return int(cleaned)
 
+def _env_stripped_lower(name: str, default: str) -> str:
+    return _env_str(name, default).strip().lower()
+
 def _env_path(name: str, default: Path, base_dir: Path) -> Path:
     """Read a directory path from env.
 
@@ -110,8 +113,22 @@ MINERU_OUTPUT_DIR = _env_path("MINERU_OUTPUT_DIR", BASE_DIR / "mineru_outputs", 
 SHAREPOINT_DOWNLOAD_DIR = _env_path("SHAREPOINT_DOWNLOAD_DIR", BASE_DIR / "sharepoint_downloads", BASE_DIR)
 STATIC_DIR = _env_path("STATIC_DIR", BASE_DIR / "static", BASE_DIR)
 
+# Searchable PDF output folder (PDFs with an embedded text layer)
+SEARCHABLE_PDF_OUTPUT_DIR = _env_path("SEARCHABLE_PDF_OUTPUT_DIR", JSON_OUTPUT_DIR, BASE_DIR)
+
+# Searchable PDF text layer behavior
+# Some PDF viewers behave inconsistently with truly "invisible" text.
+# Default uses a near-transparent overlay to improve search reliability.
+SEARCHABLE_PDF_TEXT_OPACITY = float(_env_str("SEARCHABLE_PDF_TEXT_OPACITY", "0.01"))
+
+# Optional: embed a specific font to improve Unicode search/copy in some viewers.
+# Examples:
+#   Windows: C:\\Windows\\Fonts\\arial.ttf
+#   Linux: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+SEARCHABLE_PDF_FONT_PATH = _env_path("SEARCHABLE_PDF_FONT_PATH", None, BASE_DIR)
+
 # Create directories
-for dir_path in [UPLOAD_DIR, JSON_OUTPUT_DIR, CSV_OUTPUT_DIR, MINERU_OUTPUT_DIR, SHAREPOINT_DOWNLOAD_DIR, STATIC_DIR]:
+for dir_path in [UPLOAD_DIR, JSON_OUTPUT_DIR, CSV_OUTPUT_DIR, MINERU_OUTPUT_DIR, SHAREPOINT_DOWNLOAD_DIR, STATIC_DIR, SEARCHABLE_PDF_OUTPUT_DIR]:
     dir_path.mkdir(exist_ok=True)
 
 # ============================================================================
@@ -151,6 +168,23 @@ AZURE_OPENAI_CUSTOM_PROMPT = _env_str("AZURE_OPENAI_CUSTOM_PROMPT", "")  # Defau
 AZURE_OPENAI_SYSTEM_PROMPT = _decode_dotenv_newlines(_env_str("AZURE_OPENAI_SYSTEM_PROMPT", ""))
 AZURE_OPENAI_USER_PROMPT = _decode_dotenv_newlines(_env_str("AZURE_OPENAI_USER_PROMPT", ""))
 
+# Azure OpenAI multimodal options
+# If enabled, PDF processing will send BOTH:
+# - the prompt text (including raw MinerU JSON when enabled)
+# - all PDF page images (as image_url data URLs)
+AZURE_OPENAI_INCLUDE_IMAGES = _env_bool("AZURE_OPENAI_INCLUDE_IMAGES", True)
+# 0 means "no limit" (send all pages). Set e.g. 5 to send only first 5 pages.
+AZURE_OPENAI_IMAGE_MAX_PAGES = _env_int("AZURE_OPENAI_IMAGE_MAX_PAGES", 0)
+# Resize images so the longest side is at most this many pixels (0 disables resizing).
+AZURE_OPENAI_IMAGE_MAX_SIDE = _env_int("AZURE_OPENAI_IMAGE_MAX_SIDE", 1280)
+# Image format for data URLs: jpeg or png
+AZURE_OPENAI_IMAGE_FORMAT = _env_stripped_lower("AZURE_OPENAI_IMAGE_FORMAT", "jpeg")
+
+# Whether to append the full raw MinerU JSON into the user prompt.
+AZURE_OPENAI_INCLUDE_RAW_MINERU_JSON = _env_bool("AZURE_OPENAI_INCLUDE_RAW_MINERU_JSON", True)
+# 0 means "no limit". If >0, raw JSON will be truncated to this many characters.
+AZURE_OPENAI_RAW_JSON_MAX_CHARS = _env_int("AZURE_OPENAI_RAW_JSON_MAX_CHARS", 0)
+
 # Note: Output format is fixed to JSON (frontend/env no longer offers a CSV option)
 
 # SharePoint settings
@@ -170,6 +204,14 @@ MINERU_METHOD = _env_str("MINERU_METHOD", "auto")  # Options: auto, txt, ocr
 # MinerU output selection: JSON or PDF
 # Options: json (_content_list.json, default), layout_pdf (_layout.pdf), span_pdf (_span.pdf), both_pdf (both PDFs)
 MINERU_OUTPUT_SOURCE = _env_str("MINERU_OUTPUT_SOURCE", "json").lower()  # Default: JSON
+
+# MinerU JSON file variant selection (when MINERU_OUTPUT_SOURCE=json)
+# Options:
+# - content_list (default) -> *_content_list.json
+# - middle -> *_middle.json
+# - model -> *_model.json
+# You can also pass explicit suffixes like _content_list.json / _middle.json / _model.json.
+MINERU_JSON_VARIANT = _env_str("MINERU_JSON_VARIANT", "content_list").lower()
 
 # MinerU header zone handling: some layouts mark headers/footers as discarded; this option converts discarded blocks
 # in the header zone to text to avoid losing important content downstream.
@@ -197,6 +239,24 @@ APP_HOST = _env_str("APP_HOST", "localhost")
 APP_PORT = _env_int("APP_PORT", 8000)
 DEBUG = _env_bool("DEBUG", False)  # Default False
 FORCE_OCR = _env_bool("FORCE_OCR", False)  # Default False
+
+# Whether to generate a searchable PDF (invisible text layer) when OCR is performed.
+# If False, OCR output is still produced as JSON, but the PDF is not rewritten.
+GENERATE_SEARCHABLE_PDF = _env_bool("GENERATE_SEARCHABLE_PDF", True)
+
+# Searchable PDF generation (OCRmyPDF) settings
+# These control how `services/ocr_app.py` is invoked from the main workflow.
+OCR_LANGUAGE = _env_str("OCR_LANGUAGE", "eng")
+OCR_ROTATE_PAGES = _env_bool("OCR_ROTATE_PAGES", True)
+OCR_DESKEW = _env_bool("OCR_DESKEW", False)
+OCR_JOBS = _env_int("OCR_JOBS", 1)
+OCR_OPTIMIZE = _env_int("OCR_OPTIMIZE", 0)
+# Allow forcing OCRmyPDF even if the PDF already has text (in addition to FORCE_OCR)
+OCR_FORCE_REDO = _env_bool("OCR_FORCE_REDO", False)
+
+# Optional: explicitly point to a tessdata directory (or its parent) when Tesseract
+# can't find configs like 'hocr'/'txt' on Windows.
+OCR_TESSDATA_PREFIX = _env_str("OCR_TESSDATA_PREFIX", "")
 # Backend concurrency/queue settings: default to a single worker processing one job at a time
 # to avoid running multiple MinerU/AI jobs in parallel and exhausting resources.
 MAX_CONCURRENT_JOBS = _env_int("MAX_CONCURRENT_JOBS", 1)

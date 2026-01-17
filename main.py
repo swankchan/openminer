@@ -21,6 +21,7 @@ from services.mineru_service import MinerUService
 from services.azure_ai_service import AzureAIService
 from services.sharepoint_service import SharePointService
 from services.folder_service import FolderService
+from services.ocr_app import ocr_to_searchable_pdf
 from config import (
     UPLOAD_DIR,
     JSON_OUTPUT_DIR,
@@ -36,6 +37,15 @@ from config import (
     AZURE_OPENAI_TEMPERATURE,
     OLLAMA_TEMPERATURE,
     MAX_CONCURRENT_JOBS,
+    SEARCHABLE_PDF_OUTPUT_DIR,
+    GENERATE_SEARCHABLE_PDF,
+    OCR_LANGUAGE,
+    OCR_ROTATE_PAGES,
+    OCR_DESKEW,
+    OCR_JOBS,
+    OCR_OPTIMIZE,
+    OCR_FORCE_REDO,
+    OCR_TESSDATA_PREFIX,
 )
 import re
 from dotenv import load_dotenv, dotenv_values
@@ -100,7 +110,7 @@ def _write_dotenv_updates(env_path: Path, updates: Dict[str, str]) -> None:
         raw_value = updates.get(key, "")
         # Quote if value contains spaces or a '#'
         needs_quotes = (" " in raw_value) or ("\t" in raw_value) or ("#" in raw_value)
-        value_str = f"\"{raw_value.replace('\\\\', '\\\\\\\\').replace('\\"', '\\\\"')}\"" if needs_quotes else raw_value
+        value_str = f"\"{raw_value.replace('\\"', '\\\\"')}\"" if needs_quotes else raw_value
 
         newline = "\n"
         if line.endswith("\r\n"):
@@ -113,7 +123,7 @@ def _write_dotenv_updates(env_path: Path, updates: Dict[str, str]) -> None:
             continue
         raw_value = updates.get(key, "")
         needs_quotes = (" " in raw_value) or ("\t" in raw_value) or ("#" in raw_value)
-        value_str = f"\"{raw_value.replace('\\\\', '\\\\\\\\').replace('\\"', '\\\\"')}\"" if needs_quotes else raw_value
+        value_str = f"\"{raw_value.replace('\\"', '\\\\"')}\"" if needs_quotes else raw_value
         out_lines.append(f"{key}={value_str}\n")
 
     env_path.write_text("".join(out_lines), encoding="utf-8")
@@ -148,6 +158,49 @@ def _aadsts_hint(code: Optional[str]) -> Optional[str]:
     }
     return hints.get(code)
 
+
+def _decode_env_newlines(value: str) -> str:
+    if value is None:
+        return ""
+    s = str(value)
+    # Tolerate legacy values that were accidentally double-escaped.
+    return s.replace("\\\\n", "\n").replace("\\n", "\n")
+
+
+def _encode_env_newlines(value: str) -> str:
+    if value is None:
+        return ""
+    s = str(value).replace("\r\n", "\n")
+    return s.replace("\n", "\\n")
+
+
+def _read_dotenv_raw_value(env_path: Path, key: str) -> Optional[str]:
+    """Best-effort: read a KEY=value from the raw .env text.
+
+    This is intentionally more lenient than python-dotenv parsing so we can recover
+    from invalid quoting (e.g., unescaped '"' inside a quoted prompt value).
+    """
+    try:
+        if not env_path.exists():
+            return None
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            m = re.match(r"^\s*" + re.escape(key) + r"\s*=\s*(.*)\s*$", line)
+            if not m:
+                continue
+            return m.group(1)
+    except Exception:
+        return None
+    return None
+
+
+def _lenient_unquote_env_value(raw: Optional[str]) -> str:
+    if raw is None:
+        return ""
+    s = str(raw).strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
+        s = s[1:-1]
+    return s
+
 # WebSocket 連接管理器
 class ProgressManager:
     """管理 WebSocket 連接和進度更新"""
@@ -172,7 +225,7 @@ class ProgressManager:
         if DEBUG:
             print(f"[WEBSOCKET] 連接斷開: {task_id}")
     
-    async def send_progress(self, task_id: str, percentage: int, message: str, stage: str = None):
+    async def send_progress(self, task_id: str, percentage: int, message: str, stage: Optional[str] = None):
         """發送進度更新"""
         if task_id in self.active_connections:
             try:
@@ -574,6 +627,65 @@ async def set_sharepoint_settings(payload: Dict[str, Any] = Body(...)):
     return {"status": "ok", "secret_set": secret_set}
 
 
+@app.get("/api/settings/prompts")
+async def get_prompt_settings():
+    """Return the current default prompts (from .env when present)."""
+    env_path = BASE_DIR / ".env"
+    values = dict(dotenv_values(env_path)) if env_path.exists() else {}
+
+    system_prompt_raw = _strip_wrapping_quotes(values.get("AZURE_OPENAI_SYSTEM_PROMPT") or "")
+    user_prompt_raw = _strip_wrapping_quotes(values.get("AZURE_OPENAI_USER_PROMPT") or "")
+
+    # If dotenv parsing yields empty, fall back to raw-line parsing (handles invalid quoting).
+    if not system_prompt_raw:
+        system_prompt_raw = _lenient_unquote_env_value(_read_dotenv_raw_value(env_path, "AZURE_OPENAI_SYSTEM_PROMPT"))
+    if not user_prompt_raw:
+        user_prompt_raw = _lenient_unquote_env_value(_read_dotenv_raw_value(env_path, "AZURE_OPENAI_USER_PROMPT"))
+
+    # Handle common escaping patterns when reading raw lines.
+    system_prompt_raw = system_prompt_raw.replace("\\\"", '"').replace("\\\\", "\\")
+    user_prompt_raw = user_prompt_raw.replace("\\\"", '"').replace("\\\\", "\\")
+    return {
+        "system_prompt": _decode_env_newlines(system_prompt_raw),
+        "user_prompt": _decode_env_newlines(user_prompt_raw),
+    }
+
+
+@app.post("/api/settings/prompts")
+async def set_prompt_settings(payload: Dict[str, Any] = Body(...)):
+    """Update default prompts in .env and reload env for immediate effect."""
+    env_path = BASE_DIR / ".env"
+
+    system_prompt = payload.get("system_prompt")
+    user_prompt = payload.get("user_prompt")
+
+    if system_prompt is None:
+        system_prompt = ""
+    if user_prompt is None:
+        user_prompt = ""
+
+    if not isinstance(system_prompt, str) or not isinstance(user_prompt, str):
+        raise HTTPException(status_code=400, detail="system_prompt and user_prompt must be strings")
+
+    # Keep .env single-line: store newlines as literal \\n sequences.
+    system_prompt_enc = _encode_env_newlines(system_prompt)
+    user_prompt_enc = _encode_env_newlines(user_prompt)
+
+    max_len = 50000
+    if len(system_prompt_enc) > max_len or len(user_prompt_enc) > max_len:
+        raise HTTPException(status_code=400, detail=f"Prompts are too long (max {max_len} chars)")
+
+    updates: Dict[str, str] = {
+        "AZURE_OPENAI_SYSTEM_PROMPT": system_prompt_enc,
+        "AZURE_OPENAI_USER_PROMPT": user_prompt_enc,
+    }
+
+    _write_dotenv_updates(env_path, updates)
+    load_dotenv(dotenv_path=str(env_path), override=True)
+
+    return {"status": "ok"}
+
+
 @app.get("/api/runtime_status")
 async def runtime_status():
     """提供前端顯示用的「實際運行狀態」：MinerU / CSV / AI（不包含敏感資訊）"""
@@ -617,6 +729,7 @@ async def upload_pdf(
     generate_csv: Optional[str] = Form(None),
     task_id: Optional[str] = Form(None),
     output_format: Optional[str] = Form(None),
+    mineru_json_variant: Optional[str] = Form(None),
     system_prompt: Optional[str] = Form(None),
     user_prompt: Optional[str] = Form(None),
 ):
@@ -647,6 +760,9 @@ async def upload_pdf(
             if DEBUG:
                 print(f"[OUTPUT_CONTROL] 未提供 generate_csv 參數，預設不生成表格輸出 (use generate_csv to enable)")
         
+        if not file or not file.filename:
+            raise HTTPException(status_code=400, detail="Missing upload file")
+
         # 生成基於原始文件名的安全名稱
         base_name = sanitize_filename(file.filename)
         
@@ -765,7 +881,17 @@ async def upload_pdf(
             result = await pq.enqueue(
                 f"PDF:{base_name}",
                 task_id,
-                lambda: process_pdf_file(file_path, file_id, base_name, should_generate_csv, task_id, output_format, system_prompt, user_prompt),
+                lambda: process_pdf_file(
+                    file_path,
+                    file_id,
+                    base_name,
+                    should_generate_csv,
+                    task_id,
+                    output_format,
+                    system_prompt,
+                    user_prompt,
+                    mineru_json_variant,
+                ),
             )
             
             response_data = {
@@ -778,6 +904,16 @@ async def upload_pdf(
                 "json_available": result.get("json_available", False),
                 "generate_csv": should_generate_csv
             }
+
+            # If a searchable PDF was generated, expose a direct download URL for it.
+            if result.get("searchable_pdf_path"):
+                try:
+                    sp = Path(str(result.get("searchable_pdf_path")))
+                    response_data["searchable_pdf_path"] = str(sp)
+                    response_data["searchable_pdf_filename"] = sp.name
+                    response_data["searchable_pdf_download_url"] = f"/api/download/{sp.name}"
+                except Exception:
+                    pass
             
             if should_generate_csv and result.get("csv_path"):
                 response_data["csv_path"] = result.get("csv_path")
@@ -812,7 +948,8 @@ async def upload_pdf(
 async def process_sharepoint(
     file_url: str = Form(...),
     folder_path: Optional[str] = Form(None),
-    generate_csv: Optional[str] = Form(None)
+    generate_csv: Optional[str] = Form(None),
+    mineru_json_variant: Optional[str] = Form(None),
 ):
     """從 SharePoint 處理 PDF
     
@@ -848,7 +985,7 @@ async def process_sharepoint(
         result = await pq.enqueue(
             f"SharePoint:{base_name}",
             None,
-            lambda: process_pdf_file(file_path, file_id, base_name, should_generate_csv, None, None, None, None),
+            lambda: process_pdf_file(file_path, file_id, base_name, should_generate_csv, None, None, None, None, mineru_json_variant),
         )
         
         response_data = {
@@ -860,6 +997,15 @@ async def process_sharepoint(
             "json_available": result.get("json_available", False),
             "generate_csv": should_generate_csv
         }
+
+        if result.get("searchable_pdf_path"):
+            try:
+                sp = Path(str(result.get("searchable_pdf_path")))
+                response_data["searchable_pdf_path"] = str(sp)
+                response_data["searchable_pdf_filename"] = sp.name
+                response_data["searchable_pdf_download_url"] = f"/api/download/{sp.name}"
+            except Exception:
+                pass
         
         if should_generate_csv and result.get("csv_path"):
             response_data["csv_path"] = result.get("csv_path")
@@ -899,6 +1045,58 @@ async def browse_sharepoint(folder_path: Optional[str] = None):
         # Graph HTTP calls are synchronous; run in a thread to avoid blocking the event loop.
         data = await asyncio.to_thread(sharepoint_service.browse_folder, path)
         return JSONResponse(content=data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/sharepoint/upload")
+async def upload_sharepoint_file(
+    folder_path: Optional[str] = Form(None),
+    file: UploadFile = File(...),
+):
+    """Upload a file to the specified SharePoint folder (defaults to SHAREPOINT_FOLDER)."""
+    try:
+        env_path = BASE_DIR / ".env"
+        try:
+            load_dotenv(dotenv_path=str(env_path), override=True)
+        except Exception:
+            pass
+        sharepoint_service.reload_from_env()
+
+        default_folder = os.getenv("SHAREPOINT_FOLDER") or "/"
+        target_folder = (folder_path or "").strip() or default_folder.strip() or "/"
+
+        if not file or not file.filename:
+            raise HTTPException(status_code=400, detail="Missing upload file")
+
+        content = await file.read()
+        result = await asyncio.to_thread(sharepoint_service.upload_file, target_folder, file.filename, content)
+        return JSONResponse(content={"ok": True, "folder": target_folder, "result": result})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/sharepoint/delete")
+async def delete_sharepoint_item(payload: Dict[str, Any] = Body(...)):
+    """Delete a SharePoint file/folder by server-relative path."""
+    try:
+        env_path = BASE_DIR / ".env"
+        try:
+            load_dotenv(dotenv_path=str(env_path), override=True)
+        except Exception:
+            pass
+        sharepoint_service.reload_from_env()
+
+        path = str((payload or {}).get("path") or "").strip()
+        if not path:
+            raise HTTPException(status_code=400, detail="Missing 'path'")
+
+        result = await asyncio.to_thread(sharepoint_service.delete_item, path)
+        return JSONResponse(content=result)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -979,7 +1177,8 @@ async def validate_sharepoint(folder_path: Optional[str] = None):
 @app.post("/api/process-folder")
 async def process_folder(
     folder_path: str = Form(...),
-    generate_csv: Optional[str] = Form(None)
+    generate_csv: Optional[str] = Form(None),
+    mineru_json_variant: Optional[str] = Form(None),
 ):
     """從 Windows 資料夾處理 PDF
     
@@ -1003,7 +1202,7 @@ async def process_folder(
             for pdf_path in pdf_files:
                 file_id = str(uuid.uuid4())
                 base_name = sanitize_filename(Path(pdf_path).name)
-                result = await process_pdf_file(pdf_path, file_id, base_name, should_generate_csv, None, None, None, None)
+                result = await process_pdf_file(pdf_path, file_id, base_name, should_generate_csv, None, None, None, None, mineru_json_variant)
                 result_item = {
                     "file_id": file_id,
                     "filename": base_name,
@@ -1012,11 +1211,21 @@ async def process_folder(
                     "json_available": result.get("json_available", False),
                     "generate_csv": should_generate_csv
                 }
+                if result.get("searchable_pdf_path"):
+                    try:
+                        sp = Path(str(result.get("searchable_pdf_path")))
+                        result_item["searchable_pdf_path"] = str(sp)
+                        result_item["searchable_pdf_filename"] = sp.name
+                        result_item["searchable_pdf_download_url"] = f"/api/download/{sp.name}"
+                    except Exception:
+                        pass
                 if should_generate_csv and result.get("csv_path"):
                     result_item["csv_path"] = result.get("csv_path")
-                    csv_path_obj = Path(result.get("csv_path"))
-                    result_item["csv_filename"] = csv_path_obj.name
-                    result_item["download_url"] = f"/api/download/{csv_path_obj.stem}"
+                    csv_path_str = result.get("csv_path")
+                    if csv_path_str:
+                        csv_path_obj = Path(csv_path_str)
+                        result_item["csv_filename"] = csv_path_obj.name
+                        result_item["download_url"] = f"/api/download/{csv_path_obj.stem}"
                 else:
                     out_path = result.get("output_path") or result.get("csv_path")
                     if out_path:
@@ -1048,6 +1257,13 @@ async def process_folder(
 @app.get("/api/download/{filename}")
 async def download_output(filename: str):
     """下載生成的輸出檔案（JSON 優先，CSV 向後相容；使用文件名而非 UUID）"""
+    # Support direct PDF download by full filename.
+    # Example: /api/download/invoice_searchable_20260116_201122.pdf
+    if filename.lower().endswith(".pdf"):
+        pdf_path = SEARCHABLE_PDF_OUTPUT_DIR / filename
+        if pdf_path.exists():
+            return FileResponse(path=pdf_path, filename=pdf_path.name, media_type="application/pdf")
+
     # 優先嘗試 JSON，若找不到再嘗試 CSV（向後相容）
     json_path = JSON_OUTPUT_DIR / f"{filename}.json"
     if json_path.exists():
@@ -1090,12 +1306,13 @@ async def download_output(filename: str):
 async def process_pdf_file(
     file_path: Path, 
     file_id: str, 
-    base_name: str = None, 
-    generate_csv: bool = None,
-    task_id: str = None,
+    base_name: Optional[str] = None,
+    generate_csv: Optional[bool] = None,
+    task_id: Optional[str] = None,
     output_format: Optional[str] = None,
     system_prompt: Optional[str] = None,
     user_prompt: Optional[str] = None,
+    mineru_json_variant: Optional[str] = None,
 ) -> dict:
     """處理 PDF 檔案的完整流程
     
@@ -1131,12 +1348,56 @@ async def process_pdf_file(
                 await progress_manager.send_progress(task_id, 15, "分析內容…", "analyze_pdf")
             needs_ocr = await pdf_processor.needs_ocr(file_path)
         
-        # 步驟 2: 如果需要 OCR，使用 MinerU 處理
+        searchable_pdf_path: Optional[Path] = None
+
+        # 步驟 2: 如果需要 OCR，先用 ocrmypdf 產生「可搜尋 PDF」，再讓 MinerU 讀取該 PDF
         if needs_ocr:
             if DEBUG:
                 print(f"[OCR_PROCESS] 使用 MinerU 進行 OCR 處理: {file_path}")
             if task_id:
                 await progress_manager.send_progress(task_id, 20, "文字辨識中…", "ocr_start")
+
+            # Policy: when OCR is needed, MinerU must run on the searchable PDF.
+            # If we cannot produce it, stop processing (no fallback to the uploaded PDF).
+            if not GENERATE_SEARCHABLE_PDF:
+                if task_id:
+                    await progress_manager.send_progress(task_id, 100, "已停止：未啟用可搜尋 PDF 產生", "failed")
+                raise RuntimeError(
+                    "OCR required but GENERATE_SEARCHABLE_PDF=False. Enable searchable PDF generation to proceed."
+                )
+
+            try:
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                searchable_pdf_path = SEARCHABLE_PDF_OUTPUT_DIR / f"{base_name}_searchable_{ts}.pdf"
+                if task_id:
+                    await progress_manager.send_progress(task_id, 22, "建立可搜尋 PDF…", "searchable_pdf")
+
+                # ocrmypdf is CPU-bound / external-tool heavy; run it off the event loop.
+                searchable_pdf_path = await asyncio.to_thread(
+                    ocr_to_searchable_pdf,
+                    file_path,
+                    searchable_pdf_path,
+                    language=str(OCR_LANGUAGE or "eng"),
+                    redo=bool(FORCE_OCR) or bool(OCR_FORCE_REDO),
+                    deskew=bool(OCR_DESKEW),
+                    rotate=bool(OCR_ROTATE_PAGES),
+                    jobs=int(OCR_JOBS),
+                    optimize=int(OCR_OPTIMIZE),
+                    tessdata_prefix=(Path(str(OCR_TESSDATA_PREFIX)).expanduser() if str(OCR_TESSDATA_PREFIX).strip() else None),
+                )
+                if not searchable_pdf_path or (not Path(searchable_pdf_path).exists()):
+                    raise RuntimeError("Searchable PDF was not produced")
+
+                pdf_for_mineru = searchable_pdf_path
+
+                if DEBUG:
+                    print(f"[SEARCHABLE_PDF] ✓ Created searchable PDF: {searchable_pdf_path}")
+            except Exception as e:
+                searchable_pdf_path = None
+                if task_id:
+                    await progress_manager.send_progress(task_id, 100, f"已停止：建立可搜尋 PDF 失敗：{e}", "failed")
+                raise RuntimeError(f"Failed to create searchable PDF; aborting: {e}") from e
+
             # 傳遞進度回調給 MinerU 服務
             async def mineru_progress_callback(p, msg, stage):
                 if task_id:
@@ -1146,8 +1407,9 @@ async def process_pdf_file(
             
             try:
                 mineru_json = await mineru_service.process_pdf(
-                    file_path,
-                    progress_callback=mineru_progress_callback if task_id else None
+                    pdf_for_mineru,
+                    progress_callback=mineru_progress_callback if task_id else None,
+                    json_variant=mineru_json_variant,
                 )
             except Exception as e:
                 # MinerU 失敗：回退到「純文字提取」避免生成空/假資料 CSV
@@ -1155,7 +1417,8 @@ async def process_pdf_file(
                     print(f"[OCR_PROCESS] MinerU 失敗，回退到純文字提取: {e}")
                 if task_id:
                     await progress_manager.send_progress(task_id, 35, "MinerU 失敗，改用文字提取…", "ocr_fallback")
-                mineru_json = await pdf_processor.extract_text_to_json(file_path)
+                # Prefer extracting text from the searchable-PDF if we created it.
+                mineru_json = await pdf_processor.extract_text_to_json(pdf_for_mineru)
         else:
             if DEBUG:
                 print(f"[TEXT_EXTRACT] 直接提取文字（不需要 OCR）: {file_path}")
@@ -1182,6 +1445,73 @@ async def process_pdf_file(
         if task_id:
             await progress_manager.send_progress(task_id, 70, "生成結構化輸出…", "generate_output")
 
+        # Build multimodal inputs for Azure OpenAI: all PDF pages as images + full MinerU JSON text.
+        image_data_urls = None
+        try:
+            from config import (
+                AZURE_OPENAI_INCLUDE_IMAGES,
+                AZURE_OPENAI_IMAGE_MAX_PAGES,
+                AZURE_OPENAI_IMAGE_MAX_SIDE,
+                AZURE_OPENAI_IMAGE_FORMAT,
+                AI_SERVICE,
+            )
+            include_images = bool(AZURE_OPENAI_INCLUDE_IMAGES)
+            if include_images and (getattr(azure_ai_service, "ai_service", None) or AI_SERVICE) == "azure_openai" and getattr(azure_ai_service, "client", None):
+                # pdf2image + PIL are synchronous; run in a thread.
+                def _encode_pdf_images() -> list[str]:
+                    import base64
+                    import io
+                    from PIL import Image
+
+                    images = pdf_processor.convert_to_images(file_path)
+                    max_pages = int(AZURE_OPENAI_IMAGE_MAX_PAGES or 0)
+                    if max_pages > 0:
+                        images = images[:max_pages]
+
+                    fmt = (AZURE_OPENAI_IMAGE_FORMAT or "jpeg").strip().lower()
+                    if fmt not in ("jpeg", "jpg", "png"):
+                        fmt = "jpeg"
+                    pil_format = "JPEG" if fmt in ("jpeg", "jpg") else "PNG"
+                    mime = "image/jpeg" if pil_format == "JPEG" else "image/png"
+
+                    max_side = int(AZURE_OPENAI_IMAGE_MAX_SIDE or 0)
+                    out: list[str] = []
+                    for im in images:
+                        if not isinstance(im, Image.Image):
+                            continue
+
+                        # Resize to control payload size.
+                        if max_side and max_side > 0:
+                            w, h = im.size
+                            longest = max(w, h)
+                            if longest > max_side:
+                                scale = max_side / float(longest)
+                                new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
+                                im = im.copy()
+                                im.thumbnail(new_size)
+
+                        # Ensure RGB for JPEG.
+                        if pil_format == "JPEG" and im.mode not in ("RGB", "L"):
+                            im = im.convert("RGB")
+
+                        buf = io.BytesIO()
+                        save_kwargs = {}
+                        if pil_format == "JPEG":
+                            save_kwargs["quality"] = 80
+                            save_kwargs["optimize"] = True
+                        im.save(buf, format=pil_format, **save_kwargs)
+                        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+                        out.append(f"data:{mime};base64,{b64}")
+                    return out
+
+                image_data_urls = await asyncio.to_thread(_encode_pdf_images)
+                if DEBUG:
+                    print(f"[AZURE_OPENAI] Prepared {len(image_data_urls)} image(s) for multimodal request")
+        except Exception as e:
+            image_data_urls = None
+            if DEBUG:
+                print(f"[AZURE_OPENAI] ⚠ Failed to prepare PDF images; continuing without images: {e}")
+
         async def ai_progress_callback(p: int, msg: str, stage: str):
             if not task_id:
                 return
@@ -1205,6 +1535,7 @@ async def process_pdf_file(
                 output_format=output_format or "json",
                 system_prompt_override=system_prompt,
                 user_prompt_override=user_prompt,
+                image_data_urls=image_data_urls,
             )
 
             if task_id:
@@ -1216,6 +1547,8 @@ async def process_pdf_file(
             }
             if out_json_path:
                 result["mineru_output_path"] = str(out_json_path)
+            if searchable_pdf_path:
+                result["searchable_pdf_path"] = str(searchable_pdf_path)
 
             if should_generate_csv:
                 result["csv_path"] = str(final_path)

@@ -80,6 +80,73 @@
             100% { background-position: 0% 50%; }
         }
 
+        /* SharePoint tree view */
+        .sp-tree {
+            background: rgba(255,255,255,0.55);
+            border-radius: 12px;
+            padding: 12px;
+            font-size: 13px;
+            max-height: 420px;
+            overflow: auto;
+        }
+
+        .sp-tree details {
+            margin-left: 14px;
+        }
+
+        .sp-tree details[open] > summary::before {
+            content: '▾';
+            display: inline-block;
+            width: 18px;
+            color: rgba(17, 24, 39, 0.65);
+            font-weight: 800;
+        }
+
+        .sp-tree details:not([open]) > summary::before {
+            content: '▸';
+            display: inline-block;
+            width: 18px;
+            color: rgba(17, 24, 39, 0.65);
+            font-weight: 800;
+        }
+
+        .sp-tree summary {
+            list-style: none;
+            cursor: pointer;
+            padding: 4px 6px;
+            border-radius: 8px;
+            user-select: none;
+        }
+
+        .sp-tree summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .sp-tree summary:hover {
+            background: rgba(37, 99, 235, 0.07);
+        }
+
+        .sp-tree .sp-tree-folder {
+            color: #2563eb;
+            text-decoration: none;
+            font-weight: 800;
+        }
+
+        .sp-tree .sp-tree-folder:hover {
+            text-decoration: underline;
+        }
+
+        .sp-tree .sp-tree-files {
+            margin: 4px 0 6px 32px;
+            display: grid;
+            gap: 2px;
+        }
+
+        .sp-tree .sp-tree-file {
+            opacity: 0.9;
+            padding: 2px 0;
+        }
+
         /* Starfield background */
         body::before {
             content: '';
@@ -962,13 +1029,22 @@
             <div class="file-info" id="fileInfo" style="display: none;"></div>
             <!-- CSV options removed: outputs are JSON only -->
             <div class="form-group">
-                <label for="systemPromptInput">System Prompt (optional, overrides default)</label>
+                <label for="systemPromptInput">System Prompt (optional override; can also be saved as default)</label>
                 <textarea id="systemPromptInput" rows="3" style="min-height:72px; width:100%;" placeholder="Leave blank to use defaults or .env settings"></textarea>
             </div>
             <div class="form-group">
-                <label for="userPromptInput">User Prompt (optional, overrides default)</label>
+                <label for="userPromptInput">User Prompt (optional override; can also be saved as default)</label>
                 <textarea id="userPromptInput" rows="3" style="min-height:72px; width:100%;" placeholder="Leave blank to use defaults or .env settings"></textarea>
             </div>
+            <div style="display:flex; gap:10px; margin-top: 8px;">
+                <button class="btn" type="button" onclick="loadPromptDefaults()" style="flex:1; padding: 12px 14px;">
+                    <span><i class="fas fa-rotate"></i> Load defaults (.env)</span>
+                </button>
+                <button class="btn" type="button" onclick="savePromptDefaults()" style="flex:1; padding: 12px 14px;">
+                    <span><i class="fas fa-floppy-disk"></i> Save as defaults (.env)</span>
+                </button>
+            </div>
+            <div id="promptStatusBox" style="display:none; margin-top:10px; padding:10px 12px; border-radius:12px; font-size:13px;"></div>
             <button class="btn" onclick="uploadFile()" id="uploadBtn" disabled>
                 <span><i class="fas fa-magic"></i> Process</span>
             </button>
@@ -1036,16 +1112,33 @@
             <details class="upload-details" style="margin-top: 10px;">
                 <summary><i class="fas fa-folder-tree"></i> Browse SharePoint folder</summary>
                 <div class="upload-details-body">
-                    <div style="display:flex; gap:10px; align-items:center;">
-                        <div style="flex:1; font-size: 12px; opacity: .85; overflow:hidden; text-overflow: ellipsis; white-space: nowrap;" title="Current folder">
-                            Current: <span id="spBrowsePath" style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;"></span>
+                    <div title="Current folder" style="margin-bottom: 10px;">
+                        <div id="spBrowseBreadcrumbs" style="font-size: 12px; opacity: .95; overflow:hidden; text-overflow: ellipsis; white-space: nowrap;"></div>
+                        <div style="font-size: 11px; opacity: .75; overflow:hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px;">
+                            <span style="opacity:.9;">Path:</span>
+                            <span id="spBrowsePath" style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;"></span>
                         </div>
-                        <button class="btn" type="button" onclick="browseSharePointUp()" style="padding: 10px 12px; min-width: 92px;">
+                    </div>
+
+                    <div style="display:flex; gap:10px; align-items:center;">
+                        <button class="btn" type="button" onclick="browseSharePointUp()" style="padding: 10px 12px; min-width: 92px; flex:1;">
                             <span><i class="fas fa-arrow-up"></i> Up</span>
                         </button>
-                        <button class="btn" type="button" onclick="browseSharePoint()" style="padding: 10px 12px; min-width: 110px;">
+                        <button class="btn" type="button" onclick="openSharePointUploadPicker()" style="padding: 10px 12px; min-width: 120px; flex:1;">
+                            <span><i class="fas fa-upload"></i> Upload</span>
+                        </button>
+                        <button class="btn" type="button" onclick="browseSharePoint()" style="padding: 10px 12px; min-width: 110px; flex:1;">
                             <span><i class="fas fa-rotate"></i> Refresh</span>
                         </button>
+                    </div>
+
+                    <div style="display:flex; gap:10px; align-items:center; margin-top: 10px; flex-wrap: wrap;">
+                        <input type="file" id="spUploadFiles" multiple style="position:absolute; left:-10000px; width:1px; height:1px; opacity:0;" onchange="onSharePointUploadFilesSelected(event)" />
+                        <input type="file" id="spUploadFolder" webkitdirectory directory multiple style="position:absolute; left:-10000px; width:1px; height:1px; opacity:0;" onchange="onSharePointUploadFolderSelected(event)" />
+
+                        <div id="spUploadSummary" style="flex:1; min-width: 220px; font-size:12px; opacity:.85; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                            Click Upload to select files or a folder
+                        </div>
                     </div>
                     <div id="spBrowseList" style="margin-top: 10px;"></div>
                     <div style="font-size: 12px; opacity: 0.8; margin-top: 8px;">
@@ -1077,12 +1170,12 @@
                         <button class="btn" type="button" onclick="loadSharePointTree()" style="padding: 10px 12px; min-width: 140px;">
                             <span><i class="fas fa-diagram-project"></i> Load tree</span>
                         </button>
-                        <button class="btn" type="button" onclick="useBrowsePathForTree()" style="padding: 10px 12px; min-width: 140px;">
-                            <span><i class="fas fa-location-crosshairs"></i> Use current</span>
+                        <button class="btn" type="button" onclick="useBrowsePathForTree()" style="padding: 10px 12px; min-width: 140px;" title="Copy the current SharePoint browse path into the Path field">
+                            <span><i class="fas fa-location-crosshairs"></i> Use current (browse)</span>
                         </button>
                     </div>
                     <div id="spTreeStatus" style="margin-top:10px; display:none; padding:10px 12px; border-radius:12px; font-size:13px;"></div>
-                    <pre id="spTreeOutput" style="margin-top:10px; max-height: 420px; overflow:auto; white-space: pre; background: rgba(255,255,255,0.55); padding: 12px; border-radius: 12px; font-size: 12px;"></pre>
+                    <div id="spTreeOutput" class="sp-tree" style="margin-top:10px;"></div>
                     <div style="font-size: 12px; opacity: 0.8; margin-top: 8px;">
                         Tip: depth 3–5 is usually enough. Increase max nodes only if needed.
                     </div>
@@ -1362,7 +1455,70 @@
         // Update subtitle on load (reflect backend runtime status)
         document.addEventListener('DOMContentLoaded', () => {
             refreshRuntimeSubtitle();
+            // Best-effort: prefill prompt boxes from saved defaults only when empty.
+            loadPromptDefaults(true).catch(() => {});
         });
+
+        function showPromptStatus(kind, message) {
+            const box = document.getElementById('promptStatusBox');
+            if (!box) return;
+            box.style.display = 'block';
+            const colors = {
+                success: { bg: 'rgba(16,185,129,.12)', fg: '#065f46', border: '1px solid rgba(16,185,129,.25)' },
+                error: { bg: 'rgba(239,68,68,.12)', fg: '#7f1d1d', border: '1px solid rgba(239,68,68,.25)' },
+                info: { bg: 'rgba(99,102,241,.12)', fg: '#312e81', border: '1px solid rgba(99,102,241,.25)' },
+            };
+            const c = colors[kind] || colors.info;
+            box.style.background = c.bg;
+            box.style.color = c.fg;
+            box.style.border = c.border;
+            box.innerHTML = message;
+        }
+
+        async function loadPromptDefaults(fillIfEmptyOnly) {
+            const sysEl = document.getElementById('systemPromptInput');
+            const userEl = document.getElementById('userPromptInput');
+            if (!sysEl || !userEl) return;
+
+            if (fillIfEmptyOnly) {
+                const hasAny = (sysEl.value && sysEl.value.trim().length) || (userEl.value && userEl.value.trim().length);
+                if (hasAny) return;
+            }
+
+            showPromptStatus('info', '<i class="fas fa-spinner fa-spin"></i> Loading prompt defaults…');
+            const resp = await fetch('/api/settings/prompts');
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+                throw new Error(data.detail || 'Failed to load prompt defaults');
+            }
+            sysEl.value = (data.system_prompt || '').toString();
+            userEl.value = (data.user_prompt || '').toString();
+            showPromptStatus('success', '<i class="fas fa-check-circle"></i> Loaded prompt defaults from .env');
+        }
+
+        async function savePromptDefaults() {
+            const sysEl = document.getElementById('systemPromptInput');
+            const userEl = document.getElementById('userPromptInput');
+            if (!sysEl || !userEl) return;
+
+            const payload = {
+                system_prompt: (sysEl.value || '').toString(),
+                user_prompt: (userEl.value || '').toString(),
+            };
+
+            showPromptStatus('info', '<i class="fas fa-spinner fa-spin"></i> Saving prompt defaults…');
+            const resp = await fetch('/api/settings/prompts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+                showPromptStatus('error', '<i class="fas fa-times-circle"></i> ' + (data.detail || 'Failed to save prompts'));
+                return;
+            }
+            showPromptStatus('success', '<i class="fas fa-check-circle"></i> Saved prompt defaults to .env (takes effect immediately)');
+        }
 
         // Drag & drop handling
         const uploadArea = document.getElementById('uploadArea');
@@ -1826,10 +1982,45 @@
 
         let spBrowseCurrent = '/';
 
+        function buildSharePointBreadcrumbsFromPath(path) {
+            const p = String(path || '/');
+            const parts = p.split('/').filter(Boolean);
+            const crumbs = [{ name: '/', path: '/' }];
+            let acc = '';
+            parts.forEach(part => {
+                acc += '/' + part;
+                crumbs.push({ name: part, path: acc });
+            });
+            return crumbs;
+        }
+
+        function renderSharePointBreadcrumbs(breadcrumbs, fallbackPath) {
+            const el = document.getElementById('spBrowseBreadcrumbs');
+            if (!el) return;
+
+            const crumbs = (Array.isArray(breadcrumbs) && breadcrumbs.length)
+                ? breadcrumbs
+                : buildSharePointBreadcrumbsFromPath(fallbackPath || spBrowseCurrent || '/');
+
+            const html = crumbs.map((c, idx) => {
+                const name = (c && c.name) ? String(c.name) : '';
+                const path = (c && c.path) ? String(c.path) : '/';
+                const sep = (idx === 0) ? '' : ' <span style="opacity:.55;">›</span> ';
+                const label = (idx === 0) ? 'Home' : name;
+                return sep + `<a href="#" onclick="browseSharePoint('${encodeURIComponent(path)}'); return false;" style="color:#2563eb; text-decoration:none; font-weight:700; padding:2px 4px; border-radius:6px;">${escapeHtml(label || '(root)')}</a>`;
+            }).join('');
+
+            el.style.whiteSpace = 'nowrap';
+            el.style.overflowX = 'auto';
+            el.style.paddingBottom = '2px';
+            el.innerHTML = html || '';
+        }
+
         function setBrowsePath(path) {
             spBrowseCurrent = path || '/';
             const el = document.getElementById('spBrowsePath');
             if (el) el.textContent = spBrowseCurrent;
+            renderSharePointBreadcrumbs(null, spBrowseCurrent);
         }
 
         function setSharePointTreeStatus(kind, html) {
@@ -1848,54 +2039,89 @@
             if (input) input.value = spBrowseCurrent || '/';
         }
 
-        function formatSharePointTree(tree) {
-            const lines = [];
+        function selectSharePointTreeFolder(path) {
+            const p = (path || '/').trim() || '/';
+            const input = document.getElementById('spTreePath');
+            if (input) input.value = p;
 
+            // Also navigate the browse view to the selected folder for convenience.
+            try {
+                browseSharePoint(encodeURIComponent(p));
+            } catch (_) {}
+
+            setSharePointTreeStatus('success', `<div><i class="fas fa-folder-open"></i> Selected: <b>${escapeHtml(p)}</b></div>`);
+        }
+
+        function formatSharePointTree(tree) {
+            // Native nested HTML tree view (<details>/<summary>) with clickable folders.
             function iconFolder() { return '📁'; }
             function iconFile(isPdf) { return isPdf ? '📄' : '🗎'; }
 
-            function walk(node, prefix, isLast) {
+            function folderAnchor(label, path) {
+                const p = (path || '/').trim() || '/';
+                const js = JSON.stringify(p);
+                // Stop propagation so clicking the link doesn't toggle <details>.
+                return `<a class="sp-tree-folder" href="#" onclick="event.stopPropagation(); selectSharePointTreeFolder(${js}); return false;">${escapeHtml(label)}</a>`;
+            }
+
+            function renderNode(node, level) {
                 const name = node && node.name ? String(node.name) : '';
                 const path = node && node.path ? String(node.path) : '';
                 const truncated = !!(node && node.truncated);
                 const label = name || path || '(folder)';
-                const connector = prefix ? (isLast ? '└─ ' : '├─ ') : '';
-                const suffix = truncated ? '  (truncated)' : '';
-                lines.push(prefix + connector + iconFolder() + ' ' + label + suffix);
-
-                const nextPrefix = prefix + (prefix ? (isLast ? '   ' : '│  ') : '');
 
                 const folders = (node && node.folders) ? node.folders : [];
                 const files = (node && node.files) ? node.files : [];
 
-                const total = folders.length + files.length;
-                let idx = 0;
+                const openAttr = (level <= 1) ? ' open' : '';
+                const truncBadge = truncated ? ' <span style="opacity:.7; font-size:12px;">(truncated)</span>' : '';
 
-                folders.forEach(f => {
-                    idx += 1;
-                    walk(f, nextPrefix, idx === total);
-                });
+                const childrenHtml = [];
 
-                files.forEach(f => {
-                    idx += 1;
-                    const fname = f && f.name ? String(f.name) : '';
-                    const fpath = f && f.path ? String(f.path) : '';
-                    const isPdf = !!(f && f.is_pdf);
-                    const flabel = fname || fpath || '(file)';
-                    const fconn = idx === total ? '└─ ' : '├─ ';
-                    lines.push(nextPrefix + fconn + iconFile(isPdf) + ' ' + flabel);
-                });
+                if (Array.isArray(files) && files.length) {
+                    const fileRows = files.map(f => {
+                        const fname = f && f.name ? String(f.name) : '';
+                        const fpath = f && f.path ? String(f.path) : '';
+                        const isPdf = !!(f && f.is_pdf);
+                        const flabel = fname || fpath || '(file)';
+                        return `<div class="sp-tree-file">${iconFile(isPdf)} ${escapeHtml(flabel)}</div>`;
+                    }).join('');
+                    childrenHtml.push(`<div class="sp-tree-files">${fileRows}</div>`);
+                }
+
+                if (Array.isArray(folders) && folders.length) {
+                    childrenHtml.push(folders.map(child => renderNode(child, level + 1)).join(''));
+                }
+
+                return `
+                    <details${openAttr}>
+                        <summary>${iconFolder()} ${folderAnchor(label, path || '/')} ${truncBadge}</summary>
+                        ${childrenHtml.join('')}
+                    </details>
+                `;
             }
 
             const root = tree && tree.root ? tree.root : null;
-            if (!root) return '(No data)';
-            walk(root, '', true);
-            return lines.join('\n');
+            if (!root) return '<div style="opacity:.8;">(No data)</div>';
+            // Root without the extra left margin.
+            return `
+                <details open style="margin-left:0;">
+                    <summary>${iconFolder()} ${folderAnchor(root.name || root.path || 'root', root.path || '/')}</summary>
+                    ${(root.files && root.files.length) ? `<div class="sp-tree-files">${root.files.map(f => {
+                        const fname = f && f.name ? String(f.name) : '';
+                        const fpath = f && f.path ? String(f.path) : '';
+                        const isPdf = !!(f && f.is_pdf);
+                        const flabel = fname || fpath || '(file)';
+                        return `<div class="sp-tree-file">${iconFile(isPdf)} ${escapeHtml(flabel)}</div>`;
+                    }).join('')}</div>` : ''}
+                    ${(root.folders && root.folders.length) ? root.folders.map(child => renderNode(child, 1)).join('') : ''}
+                </details>
+            `;
         }
 
         async function loadSharePointTree() {
             const outEl = document.getElementById('spTreeOutput');
-            if (outEl) outEl.textContent = '';
+            if (outEl) outEl.innerHTML = '';
 
             const pathInput = document.getElementById('spTreePath');
             const depthInput = document.getElementById('spTreeDepth');
@@ -1928,7 +2154,7 @@
                 const extra = visited !== null ? `Visited: <b>${visited}</b>` : '';
                 const extra2 = trunc ? ' • <b>Truncated</b>' : '';
                 setSharePointTreeStatus('success', `<div><i class="fas fa-check-circle"></i> Tree loaded. ${extra}${extra2}</div>`);
-                if (outEl) outEl.textContent = formatSharePointTree(data);
+                if (outEl) outEl.innerHTML = formatSharePointTree(data);
             } catch (e) {
                 setSharePointTreeStatus('error', `<div><i class="fas fa-triangle-exclamation"></i> Failed to load tree: ${escapeHtml(e.message || String(e))}</div>`);
             }
@@ -1955,7 +2181,12 @@
                             <i class="fas fa-folder" style="color:#6366f1;"></i>
                             <div style="font-weight:600;">${escapeHtml(name)}</div>
                         </div>
-                        <i class="fas fa-chevron-right" style="opacity:.6;"></i>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <button class="btn" type="button" onclick="deleteSharePointItem(event, '${encodeURIComponent(url)}')" style="padding: 10px 12px; min-width: 46px;">
+                                <span title="Delete"><i class="fas fa-trash"></i></span>
+                            </button>
+                            <i class="fas fa-chevron-right" style="opacity:.6;"></i>
+                        </div>
                     </div>
                 `;
             }).join('');
@@ -1972,9 +2203,14 @@
                             <i class="fas ${icon}" style="color:${color};"></i>
                             <div style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(name)}</div>
                         </div>
-                        <button class="btn" type="button" onclick="selectSharePointFile(event, '${encodeURIComponent(url)}')" style="padding: 10px 12px; min-width: 92px;">
-                            <span><i class="fas fa-check"></i> Use</span>
-                        </button>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <button class="btn" type="button" onclick="deleteSharePointItem(event, '${encodeURIComponent(url)}')" style="padding: 10px 12px; min-width: 46px;">
+                                <span title="Delete"><i class="fas fa-trash"></i></span>
+                            </button>
+                            <button class="btn" type="button" onclick="selectSharePointFile(event, '${encodeURIComponent(url)}')" style="padding: 10px 12px; min-width: 92px;">
+                                <span><i class="fas fa-check"></i> Use</span>
+                            </button>
+                        </div>
                     </div>
                 `;
             }).join('');
@@ -2015,10 +2251,123 @@
                     return;
                 }
                 setBrowsePath(data.path || folderPath);
+                renderSharePointBreadcrumbs(data && data.breadcrumbs ? data.breadcrumbs : null, data.path || folderPath);
                 renderBrowseList(data);
             } catch (e) {
                 showResult('error', '<i class="fas fa-times-circle"></i> Failed to browse SharePoint: ' + e.message);
                 if (listEl) listEl.innerHTML = '';
+            }
+        }
+
+        function setSharePointUploadSummary(text) {
+            const summary = document.getElementById('spUploadSummary');
+            if (!summary) return;
+            summary.textContent = text || '';
+        }
+
+        function openSharePointUploadPicker() {
+            // Single button UX: ask which picker to open.
+            // OK -> folder upload, Cancel -> file upload.
+            const folderMode = confirm('Upload a folder?\n\nOK = Choose folder (includes subfolders)\nCancel = Choose files');
+            const input = document.getElementById(folderMode ? 'spUploadFolder' : 'spUploadFiles');
+            if (!input) return;
+            // Reset so choosing the same files/folder twice still fires change.
+            try { input.value = ''; } catch (e) {}
+            input.click();
+        }
+
+        function onSharePointUploadFilesSelected(evt) {
+            const input = document.getElementById('spUploadFiles');
+            const files = (input && input.files) ? Array.from(input.files) : [];
+            if (!files.length) {
+                setSharePointUploadSummary('No files selected');
+                return;
+            }
+            setSharePointUploadSummary(files.length === 1 ? files[0].name : `${files.length} files selected`);
+            uploadSharePointFiles(files, { preserveRelativePaths: false }).catch(() => {});
+        }
+
+        function onSharePointUploadFolderSelected(evt) {
+            const input = document.getElementById('spUploadFolder');
+            const files = (input && input.files) ? Array.from(input.files) : [];
+            if (!files.length) {
+                setSharePointUploadSummary('No folder selected');
+                return;
+            }
+            const first = files[0];
+            const root = (first && (first.webkitRelativePath || '').split('/')[0]) ? (first.webkitRelativePath.split('/')[0]) : 'folder';
+            setSharePointUploadSummary(`${files.length} files from folder: ${root}`);
+            uploadSharePointFiles(files, { preserveRelativePaths: true }).catch(() => {});
+        }
+
+        function _sharePointSafeUploadName(file, preserveRelativePaths) {
+            const base = String((file && file.name) ? file.name : '').trim();
+            const rel = String((file && file.webkitRelativePath) ? file.webkitRelativePath : '').trim();
+            if (!preserveRelativePaths || !rel) return base;
+            // Preserve relative folder context in filename to avoid collisions.
+            // SharePoint upload endpoint currently uploads to a single folder path.
+            return rel.replaceAll('\\', '/').replaceAll('/', '__');
+        }
+
+        async function uploadSharePointFiles(files, opts) {
+            const preserveRelativePaths = !!(opts && opts.preserveRelativePaths);
+            if (!files.length) {
+                showResult('error', '<i class="fas fa-exclamation-circle"></i> Please choose at least one file to upload.');
+                return;
+            }
+
+            const folder = (spBrowseCurrent || '/').trim() || '/';
+            try {
+                showResult('success', `<div><i class="fas fa-spinner fa-spin"></i> Uploading ${files.length} file(s) to ${escapeHtml(folder)}…</div>`);
+
+                for (const f of files) {
+                    const fd = new FormData();
+                    fd.append('folder_path', folder);
+                    const uploadName = _sharePointSafeUploadName(f, preserveRelativePaths);
+                    fd.append('file', f, uploadName);
+                    const resp = await fetch('/api/sharepoint/upload', { method: 'POST', body: fd });
+                    const data = await resp.json();
+                    if (!resp.ok) {
+                        throw new Error((data && data.detail) ? data.detail : 'Upload failed');
+                    }
+                }
+
+                const inputFiles = document.getElementById('spUploadFiles');
+                const inputFolder = document.getElementById('spUploadFolder');
+                if (inputFiles) inputFiles.value = '';
+                if (inputFolder) inputFolder.value = '';
+                setSharePointUploadSummary('Upload completed');
+                showResult('success', `<div><i class="fas fa-check-circle"></i> Upload completed.</div>`);
+                await browseSharePoint(folder);
+            } catch (e) {
+                showResult('error', '<i class="fas fa-times-circle"></i> Upload failed: ' + escapeHtml(e.message || String(e)));
+            }
+        }
+
+        async function deleteSharePointItem(evt, encodedUrl) {
+            if (evt) evt.stopPropagation();
+            let url = '';
+            try { url = decodeURIComponent(encodedUrl || ''); } catch (_) { url = encodedUrl || ''; }
+            url = String(url || '').trim();
+            if (!url) return;
+
+            const ok = confirm('Delete this item?\n\n' + url);
+            if (!ok) return;
+
+            try {
+                const resp = await fetch('/api/sharepoint/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: url })
+                });
+                const data = await resp.json();
+                if (!resp.ok || !(data && data.ok)) {
+                    const msg = (data && (data.detail || data.error || data.message)) ? (data.detail || data.error || data.message) : 'Delete failed';
+                    throw new Error(String(msg));
+                }
+                await browseSharePoint(spBrowseCurrent || '/');
+            } catch (e) {
+                showResult('error', '<i class="fas fa-times-circle"></i> Delete failed: ' + escapeHtml(e.message || String(e)));
             }
         }
 
@@ -2218,9 +2567,112 @@
                         <i class="fas fa-download"></i> Download JSON file
                     </a>
                 </div>`;
+
+                content += `
+                    <details class="upload-details" style="margin-top: 12px;">
+                        <summary><i class="fas fa-code"></i> JSON preview</summary>
+                        <div class="upload-details-body">
+                            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                                <button class="btn" type="button" onclick="copyJsonPreview()" style="padding: 10px 12px; min-width: 120px;">
+                                    <span><i class="fas fa-copy"></i> Copy</span>
+                                </button>
+                                <a class="btn" href="${data.download_url}" target="_blank" rel="noopener" style="padding: 10px 12px; min-width: 150px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center;">
+                                    <span><i class="fas fa-arrow-up-right-from-square"></i> Open in new tab</span>
+                                </a>
+                            </div>
+                            <pre id="jsonPreview" style="margin-top:10px; max-height: 520px; overflow:auto; white-space: pre; background: rgba(255,255,255,0.55); padding: 12px; border-radius: 12px; font-size: 12px;">Loading…</pre>
+                            <div id="jsonPreviewNote" style="margin-top:8px; font-size:12px; opacity:.8;"></div>
+                        </div>
+                    </details>
+                `;
             }
 
             resultDiv.innerHTML = content;
+
+            if (data && data.download_url) {
+                loadAndRenderJsonPreview(data.download_url).catch((e) => {
+                    const pre = document.getElementById('jsonPreview');
+                    if (pre) pre.textContent = `Failed to load JSON preview: ${e?.message || String(e)}`;
+                });
+            }
+        }
+
+        let _lastJsonPreviewText = '';
+
+        function escapeHtml(text) {
+            return String(text)
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#039;');
+        }
+
+        async function loadAndRenderJsonPreview(downloadUrl) {
+            const pre = document.getElementById('jsonPreview');
+            const note = document.getElementById('jsonPreviewNote');
+            if (!pre) return;
+
+            pre.textContent = 'Loading…';
+            if (note) note.textContent = '';
+
+            const resp = await fetch(downloadUrl, { cache: 'no-store' });
+            if (!resp.ok) {
+                throw new Error(`HTTP ${resp.status}`);
+            }
+
+            const rawText = await resp.text();
+            const maxChars = 2_000_000;
+            let text = rawText;
+            let truncated = false;
+            if (text.length > maxChars) {
+                text = text.slice(0, maxChars);
+                truncated = true;
+            }
+
+            // Try to pretty-print JSON when feasible
+            let pretty = text;
+            try {
+                // Only attempt parse when not truncated to avoid confusing JSON.parse
+                if (!truncated) {
+                    const obj = JSON.parse(text);
+                    pretty = JSON.stringify(obj, null, 2);
+                }
+            } catch {
+                // Keep raw text
+                pretty = text;
+            }
+
+            _lastJsonPreviewText = pretty;
+            pre.textContent = pretty;
+            if (note) {
+                note.textContent = truncated
+                    ? `Preview truncated to first ${maxChars.toLocaleString()} characters. Use “Download JSON file” for full output.`
+                    : '';
+            }
+        }
+
+        async function copyJsonPreview() {
+            const text = _lastJsonPreviewText || '';
+            if (!text) return;
+            try {
+                await navigator.clipboard.writeText(text);
+                const note = document.getElementById('jsonPreviewNote');
+                if (note) note.textContent = 'Copied to clipboard.';
+            } catch {
+                // Fallback
+                const pre = document.getElementById('jsonPreview');
+                if (!pre) return;
+                const range = document.createRange();
+                range.selectNodeContents(pre);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+                document.execCommand('copy');
+                sel.removeAllRanges();
+                const note = document.getElementById('jsonPreviewNote');
+                if (note) note.textContent = 'Copied to clipboard.';
+            }
         }
 
         function hideResult() {

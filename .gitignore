@@ -13,6 +13,8 @@ ENV/
 *.log
 uploads/
 outputs/
+mineru_outputs/
+tests/
 *.csv
 *.json
 .DS_Store

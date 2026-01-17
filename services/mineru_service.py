@@ -1,10 +1,11 @@
 """MinerU 2.5 integration service (using vllm-async-engine)."""
 from pathlib import Path
 import json
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional, Union, List, Tuple
 import os
 import io
 import asyncio
+from datetime import datetime
 from PIL import Image
 import pdf2image
 
@@ -15,6 +16,7 @@ from config import (
     MINERU_MODEL_NAME,
     MINERU_DEVICE,
     MINERU_OUTPUT_SOURCE,
+    MINERU_JSON_VARIANT,
     MINERU_OUTPUT_DIR,
     MINERU_INCLUDE_HEADER_ZONES,
     MINERU_HEADER_ZONE_RATIO,
@@ -115,7 +117,12 @@ class MinerUService:
                     print(f"[MINERU] Failed to initialize vllm-async-engine; falling back to CLI mode: {e}")
                 self._initialized = True
     
-    async def process_pdf(self, pdf_path: Path, progress_callback=None) -> Dict[str, Any]:
+    async def process_pdf(
+        self,
+        pdf_path: Path,
+        progress_callback=None,
+        json_variant: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Process a PDF with MinerU and return a JSON result.
         
@@ -131,7 +138,8 @@ class MinerUService:
         if MINERU_OUTPUT_SOURCE == "json":
             if APP_DEBUG:
                 print("[MINERU] MINERU_OUTPUT_SOURCE=json; using CLI mode to obtain a complete content_list.json")
-            return await self._process_with_cli(pdf_path, progress_callback)
+            effective_variant = (json_variant or MINERU_JSON_VARIANT or "").strip()
+            return await self._process_with_cli(pdf_path, progress_callback, json_variant=effective_variant)
 
         # If using vllm-async-engine and initialized successfully.
         if USE_VLLM_ASYNC and _client is not None:
@@ -139,6 +147,58 @@ class MinerUService:
         else:
             # Fall back to CLI mode.
             return await self._process_with_cli(pdf_path, progress_callback)
+
+    @staticmethod
+    def _normalize_json_variant(value: Optional[str]) -> str:
+        if value is None:
+            return ""
+        v = str(value).strip().lower()
+        if not v:
+            return ""
+
+        # Friendly aliases
+        aliases = {
+            "content_list": "_content_list.json",
+            "contentlist": "_content_list.json",
+            "middle": "_middle.json",
+            "model": "_model.json",
+        }
+        if v in aliases:
+            return aliases[v]
+
+        # Allow users to pass the suffix directly.
+        # Examples: _content_list.json, content_list.json, middle.json
+        if not v.endswith(".json"):
+            v = f"{v}.json"
+        if not v.startswith("_"):
+            v = f"_{v}"
+        return v
+
+    @staticmethod
+    def _select_json_file(json_files: list, json_variant: str) -> Path:
+        if not json_files:
+            raise FileNotFoundError("No MinerU-generated JSON files found")
+
+        # Deterministic ordering
+        ordered = sorted(json_files, key=lambda p: (p.name.lower(), str(p)))
+
+        variant_suffix = MinerUService._normalize_json_variant(json_variant)
+        if variant_suffix:
+            matches = [p for p in ordered if p.name.lower().endswith(variant_suffix)]
+            if matches:
+                return matches[0]
+            available = ", ".join([p.name for p in ordered[:10]])
+            more = "" if len(ordered) <= 10 else f" (+{len(ordered) - 10} more)"
+            raise FileNotFoundError(
+                f"Requested MinerU JSON variant '{json_variant}' not found (suffix: {variant_suffix}). "
+                f"Available: {available}{more}"
+            )
+
+        # Default: prefer content_list.json; otherwise use the first JSON file.
+        for p in ordered:
+            if p.name.lower().endswith("_content_list.json"):
+                return p
+        return ordered[0]
 
     def get_runtime_status(self) -> Dict[str, Any]:
         """Report MinerU runtime status (for frontend display; no sensitive info)."""
@@ -291,7 +351,12 @@ class MinerUService:
             "figures": []  # figures/images require additional handling
         }
     
-    async def _process_with_cli(self, pdf_path: Path, progress_callback=None) -> Dict[str, Any]:
+    async def _process_with_cli(
+        self,
+        pdf_path: Path,
+        progress_callback=None,
+        json_variant: str = "",
+    ) -> Dict[str, Any]:
         """Process a PDF via the CLI (fallback path)."""
         try:
             # MinerU creates a folder named after the PDF.
@@ -663,19 +728,13 @@ class MinerUService:
                     f"Checked path: {pdf_output_dir} (possible folders: {possible_folders})"
                 )
             
-            # Prefer content_list.json (best for CSV generation). If not present, use the first JSON file.
-            json_file = None
-            for jf in json_files:
-                if jf.name.endswith("_content_list.json"):
-                    json_file = jf
-                    if APP_DEBUG:
-                        print(f"[MINERU_CLI] Prefer content_list.json: {json_file.name}")
-                    break
-            
-            if json_file is None:
-                json_file = json_files[0]
-                if APP_DEBUG:
-                    print(f"[MINERU_CLI] Using first JSON file found: {json_file.name}")
+            # Select the requested JSON variant (default: content_list.json).
+            json_file = self._select_json_file(json_files, json_variant)
+            if APP_DEBUG:
+                if json_variant:
+                    print(f"[MINERU_CLI] Requested JSON variant: {json_variant} -> {json_file.name}")
+                else:
+                    print(f"[MINERU_CLI] Selected JSON file (default preference): {json_file.name}")
             
             if APP_DEBUG:
                 print(f"[MINERU_CLI] Final selected JSON file: {json_file}")
@@ -700,10 +759,25 @@ class MinerUService:
                 data = json.load(f)
 
             # Merge PDF embedded text layer (header) to avoid missing vendor names like JEBSEN.
-            data = self._merge_pdf_text_layer_header(pdf_path, data)
+            data, pdf_text_layer_meta = self._merge_pdf_text_layer_header(pdf_path, data)
 
             # Header zone plugin: promote discarded header blocks to text to avoid downstream dropping.
-            data = self._apply_header_zone_plugin(data)
+            data, header_plugin_meta = self._apply_header_zone_plugin(data)
+
+            # Write a sidecar JSON with confidence + metadata into the MinerU output folder.
+            try:
+                sidecar = self._build_mineru_sidecar(
+                    pdf_path=pdf_path,
+                    selected_json_file=json_file,
+                    mineru_json=data,
+                    json_variant=json_variant,
+                    pdf_text_layer_meta=pdf_text_layer_meta,
+                    header_plugin_meta=header_plugin_meta,
+                )
+                self._write_mineru_sidecar(selected_json_file=json_file, sidecar=sidecar)
+            except Exception as e:
+                if APP_DEBUG:
+                    print(f"[MINERU_SIDECAR] ⚠ Failed to write sidecar (continuing): {e}")
             return data
                 
         except Exception as e:
@@ -716,22 +790,30 @@ class MinerUService:
                 return self._generate_mock_mineru_output(pdf_path)
             raise
 
-    def _apply_header_zone_plugin(self, mineru_json: Any) -> Any:
+    def _apply_header_zone_plugin(self, mineru_json: Any) -> Tuple[Any, Dict[str, Any]]:
+        meta: Dict[str, Any] = {
+            "enabled": bool(MINERU_INCLUDE_HEADER_ZONES),
+            "promoted_discarded_total": 0,
+            "promoted_discarded_headers": 0,
+            "header_ratio": float(MINERU_HEADER_ZONE_RATIO) if MINERU_HEADER_ZONE_RATIO else 0.12,
+        }
+
         if not MINERU_INCLUDE_HEADER_ZONES:
-            return mineru_json
+            return mineru_json, meta
 
         if not isinstance(mineru_json, list):
-            return mineru_json
+            return mineru_json, meta
 
         if not mineru_json:
-            return mineru_json
+            return mineru_json, meta
 
         # NOTE: "header zone" tagging still uses header_ratio, but retention is forced:
         # any non-empty discarded text will be promoted to normal content so downstream
         # logic cannot accidentally drop headers/footers.
-        header_ratio = float(MINERU_HEADER_ZONE_RATIO) if MINERU_HEADER_ZONE_RATIO else 0.12
+        header_ratio = meta["header_ratio"]
         if header_ratio <= 0:
             header_ratio = 0.12
+        meta["header_ratio"] = header_ratio
 
         # Estimate per-page height by max bbox y2.
         page_heights: Dict[int, float] = {}
@@ -813,28 +895,36 @@ class MinerUService:
                 f"promoted_discarded_headers={promoted_headers} ratio={header_ratio}"
             )
 
-        return mineru_json
+        meta["promoted_discarded_total"] = int(promoted_total)
+        meta["promoted_discarded_headers"] = int(promoted_headers)
+        return mineru_json, meta
 
-    def _merge_pdf_text_layer_header(self, pdf_path: Path, mineru_json: Any) -> Any:
+    def _merge_pdf_text_layer_header(self, pdf_path: Path, mineru_json: Any) -> Tuple[Any, Dict[str, Any]]:
+        meta: Dict[str, Any] = {
+            "enabled": bool(MINERU_INCLUDE_PDF_TEXT_LAYER),
+            "injected_header_blocks": 0,
+            "max_lines": int(MINERU_PDF_TEXT_LAYER_MAX_LINES) if MINERU_PDF_TEXT_LAYER_MAX_LINES else 60,
+        }
+
         if not MINERU_INCLUDE_PDF_TEXT_LAYER:
-            return mineru_json
+            return mineru_json, meta
 
         if not isinstance(mineru_json, list):
-            return mineru_json
+            return mineru_json, meta
 
         try:
             from PyPDF2 import PdfReader
         except Exception:
-            return mineru_json
+            return mineru_json, meta
 
         try:
             reader = PdfReader(str(pdf_path))
         except Exception:
-            return mineru_json
+            return mineru_json, meta
 
-        max_lines = int(MINERU_PDF_TEXT_LAYER_MAX_LINES) if MINERU_PDF_TEXT_LAYER_MAX_LINES else 60
+        max_lines = meta["max_lines"]
         if max_lines <= 0:
-            return mineru_json
+            return mineru_json, meta
 
         existing_text = "\n".join(
             [
@@ -884,7 +974,156 @@ class MinerUService:
         if APP_DEBUG and injected:
             print(f"[MINERU_PDF_TEXT_LAYER] injected_header_blocks={injected} max_lines={max_lines}")
 
-        return mineru_json
+        meta["injected_header_blocks"] = int(injected)
+        return mineru_json, meta
+
+    @staticmethod
+    def _safe_float01(value: Any) -> Optional[float]:
+        try:
+            v = float(value)
+        except Exception:
+            return None
+        if v != v:  # NaN
+            return None
+        # Normalize 0-100 into 0-1 if it looks like percent.
+        if v > 1.5:
+            v = v / 100.0
+        if v < 0.0:
+            v = 0.0
+        if v > 1.0:
+            v = 1.0
+        return v
+
+    def _compute_overall_confidence(self, mineru_json: Any) -> Dict[str, Any]:
+        """Compute an overall confidence score.
+
+        MinerU CLI JSON does not reliably include per-block confidence. When present (score/confidence/conf),
+        we use it. Otherwise we fall back to a simple quality heuristic based on output richness.
+        """
+
+        # Prefer explicit confidence/score fields if present.
+        values: List[float] = []
+        weighted_sum = 0.0
+        weight_total = 0.0
+
+        if isinstance(mineru_json, list):
+            for it in mineru_json:
+                if not isinstance(it, dict):
+                    continue
+                text = (it.get("text") or "")
+                w = float(len(text.strip())) if isinstance(text, str) else 1.0
+                if w <= 0:
+                    w = 1.0
+                for key in ("confidence", "conf", "score"):
+                    if key not in it:
+                        continue
+                    v01 = self._safe_float01(it.get(key))
+                    if v01 is None:
+                        continue
+                    values.append(v01)
+                    weighted_sum += v01 * w
+                    weight_total += w
+                    break
+
+        if values and weight_total > 0:
+            overall = weighted_sum / weight_total
+            return {
+                "overall": float(overall),
+                "method": "weighted_block_confidence",
+                "samples": int(len(values)),
+            }
+
+        # Heuristic fallback: use text richness + bbox presence.
+        total_blocks = 0
+        text_blocks = 0
+        bbox_blocks = 0
+        text_chars = 0
+
+        if isinstance(mineru_json, list):
+            for it in mineru_json:
+                if not isinstance(it, dict):
+                    continue
+                total_blocks += 1
+                t = (it.get("text") or "")
+                if isinstance(t, str) and t.strip():
+                    text_blocks += 1
+                    text_chars += len(t.strip())
+                bbox = it.get("bbox")
+                if isinstance(bbox, list) and len(bbox) == 4:
+                    bbox_blocks += 1
+
+        block_ratio = (text_blocks / total_blocks) if total_blocks else 0.0
+        bbox_ratio = (bbox_blocks / total_blocks) if total_blocks else 0.0
+
+        # Map avg chars/page proxy into 0-1.
+        # Without page count, assume 1 page to keep it conservative.
+        page_count = 1
+        try:
+            max_idx = max(int(it.get("page_idx", 0)) for it in mineru_json if isinstance(it, dict))  # type: ignore[arg-type]
+            page_count = max(1, max_idx + 1)
+        except Exception:
+            page_count = 1
+
+        avg_chars_per_page = float(text_chars) / float(page_count)
+        richness = min(1.0, avg_chars_per_page / 300.0)  # 300 chars/page ~ reasonably rich
+
+        overall = 0.10 + 0.50 * richness + 0.20 * block_ratio + 0.20 * bbox_ratio
+        if overall < 0.0:
+            overall = 0.0
+        if overall > 1.0:
+            overall = 1.0
+
+        return {
+            "overall": float(overall),
+            "method": "heuristic",
+            "details": {
+                "total_blocks": int(total_blocks),
+                "text_blocks": int(text_blocks),
+                "bbox_blocks": int(bbox_blocks),
+                "text_chars": int(text_chars),
+                "page_count_proxy": int(page_count),
+                "avg_chars_per_page": float(avg_chars_per_page),
+                "block_ratio": float(block_ratio),
+                "bbox_ratio": float(bbox_ratio),
+            },
+        }
+
+    def _build_mineru_sidecar(
+        self,
+        *,
+        pdf_path: Path,
+        selected_json_file: Path,
+        mineru_json: Any,
+        json_variant: str,
+        pdf_text_layer_meta: Dict[str, Any],
+        header_plugin_meta: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        conf = self._compute_overall_confidence(mineru_json)
+        return {
+            "schema": "openminer.mineru_sidecar.v1",
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "source_pdf": str(pdf_path),
+            "selected_json_file": str(selected_json_file),
+            "json_variant": str(json_variant or ""),
+            "mineru": {
+                "method": MINERU_METHOD,
+                "output_source": MINERU_OUTPUT_SOURCE,
+                "model_name": MINERU_MODEL_NAME,
+                "device": MINERU_DEVICE,
+            },
+            "plugins": {
+                "pdf_text_layer": pdf_text_layer_meta,
+                "header_zone": header_plugin_meta,
+            },
+            "confidence": conf,
+        }
+
+    @staticmethod
+    def _write_mineru_sidecar(*, selected_json_file: Path, sidecar: Dict[str, Any]) -> Path:
+        sidecar_path = Path(selected_json_file).with_name(f"{Path(selected_json_file).stem}_sidecar.json")
+        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+        sidecar_path.write_text(json.dumps(sidecar, ensure_ascii=False, indent=2), encoding="utf-8")
+        return sidecar_path
     
     def _generate_mock_mineru_output(self, pdf_path: Path) -> Dict[str, Any]:
         """Generate mock MinerU output (for tests or when MinerU is unavailable)."""

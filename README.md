@@ -49,6 +49,14 @@ AZURE_OPENAI_API_VERSION=2023-12-01-preview
 AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4
 AZURE_OPENAI_TEMPERATURE=0  # Temperature (0-2). Default 0 to keep formatting consistent
 
+# Multimodal (send MinerU JSON + PDF page images to Azure OpenAI)
+AZURE_OPENAI_INCLUDE_IMAGES=True
+AZURE_OPENAI_IMAGE_MAX_PAGES=0      # 0 = all pages
+AZURE_OPENAI_IMAGE_MAX_SIDE=1280    # resize longest side (px)
+AZURE_OPENAI_IMAGE_FORMAT=jpeg      # jpeg or png
+AZURE_OPENAI_INCLUDE_RAW_MINERU_JSON=True
+AZURE_OPENAI_RAW_JSON_MAX_CHARS=0   # 0 = no limit (can be very large)
+
 # ============================================================================
 # Ollama settings (local model when AI_SERVICE=ollama)
 # ============================================================================
@@ -92,6 +100,10 @@ CSV_OUTPUT_DIR=outputs  # Optional separate folder for CSV/table outputs
 MINERU_OUTPUT_DIR=mineru_outputs
 SHAREPOINT_DOWNLOAD_DIR=sharepoint_downloads
 STATIC_DIR=static
+
+# Generate a searchable PDF (invisible text layer) after OCR
+GENERATE_SEARCHABLE_PDF=True
+SEARCHABLE_PDF_OUTPUT_DIR=outputs
 # CSV generation is deprecated; outputs are JSON by default. Use `generate_csv=true` in requests to opt-in to CSV output.
 # CSV generation methods:
 # - mineru_csv: extract directly from MinerU JSON (simple extraction, no AI)
@@ -117,6 +129,12 @@ INIT_MINERU_ON_STARTUP=True
 # - span_pdf: use _span.pdf (includes span info)
 # - both_pdf: use both PDFs (if present)
 MINERU_OUTPUT_SOURCE=json
+
+# When MINERU_OUTPUT_SOURCE=json, choose which MinerU JSON file to feed into AI extraction:
+# - content_list (default) -> *_content_list.json
+# - middle -> *_middle.json
+# - model -> *_model.json
+MINERU_JSON_VARIANT=content_list
 
 ## New Settings (Important)
 

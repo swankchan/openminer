@@ -193,9 +193,30 @@ class SharePointService:
             "Accept": "application/json",
         }
 
-    def _graph_request(self, method: str, path: str, *, stream: bool = False) -> Any:
+    def _graph_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        stream: bool = False,
+        json_body: Optional[Any] = None,
+        data: Optional[Any] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+    ) -> Any:
         url = path if path.lower().startswith("http") else f"{self.GRAPH_BASE_URL}{path}"
-        resp = requests.request(method.upper(), url, headers=self._graph_headers(), timeout=60, stream=stream)
+        headers = dict(self._graph_headers())
+        if extra_headers:
+            headers.update({k: v for k, v in extra_headers.items() if v is not None})
+
+        resp = requests.request(
+            method.upper(),
+            url,
+            headers=headers,
+            timeout=60,
+            stream=stream,
+            json=json_body,
+            data=data,
+        )
 
         if stream:
             if resp.status_code >= 400:
@@ -462,13 +483,122 @@ class SharePointService:
             folder_items.sort(key=lambda x: (x.get("name") or "").lower())
             file_items.sort(key=lambda x: (not bool(x.get("is_pdf")), (x.get("name") or "").lower()))
 
+            parts = [p for p in folder_path_norm.split("/") if p]
+            accum: List[str] = []
+            breadcrumbs: List[Dict[str, str]] = [{"name": "/", "path": "/"}]
+            for part in parts:
+                accum.append(part)
+                breadcrumbs.append({"name": part, "path": "/" + "/".join(accum)})
+
             return {
                 "path": folder_path_norm,
+                "breadcrumbs": breadcrumbs,
                 "folders": folder_items,
                 "files": file_items,
             }
         except Exception as e:
             raise Exception(f"Error browsing SharePoint folder: {str(e)}")
+
+    def delete_item(self, server_relative_path: str) -> Dict[str, Any]:
+        """Delete a file/folder by server-relative path."""
+        target = self._normalize_server_relative_path(server_relative_path)
+        if not target:
+            raise Exception("Missing path")
+
+        item = self._resolve_drive_item_from_server_relative(target)
+        drive_id = item.get("_drive_id")
+        item_id = item.get("id")
+        if not drive_id or not item_id:
+            raise Exception("Unable to resolve SharePoint item via Graph")
+
+        self._graph_request("DELETE", f"/drives/{drive_id}/items/{item_id}")
+        return {"ok": True, "path": target}
+
+    def upload_file(self, folder_path: str, filename: str, content: bytes) -> Dict[str, Any]:
+        """Upload a file to a SharePoint folder.
+
+        Uses simple upload for small files; falls back to an upload session for larger files.
+        """
+        folder_norm = self._normalize_server_relative_path(folder_path)
+        if not folder_norm:
+            folder_norm = "/"
+
+        safe_name = Path(str(filename or "")).name.strip()
+        if not safe_name:
+            raise Exception("Missing filename")
+
+        # Ensure folder exists and is a folder
+        folder_item = self._resolve_drive_item_from_server_relative(folder_norm)
+        if folder_item.get("file") is not None:
+            raise Exception("Target path is a file, expected a folder")
+
+        drive_id, drive_rel_folder = self._map_server_relative_to_drive(folder_norm)
+
+        drive_rel_folder = (drive_rel_folder or "").strip("/")
+        if drive_rel_folder:
+            drive_rel_file = f"{drive_rel_folder}/{safe_name}"
+        else:
+            drive_rel_file = safe_name
+
+        encoded_file_path = quote(drive_rel_file, safe="/")
+
+        size = len(content or b"")
+        simple_max = 4 * 1024 * 1024
+        if size <= simple_max:
+            item = self._graph_request(
+                "PUT",
+                f"/drives/{drive_id}/root:/{encoded_file_path}:/content",
+                data=content,
+                extra_headers={"Content-Type": "application/octet-stream"},
+            )
+            return {"ok": True, "mode": "simple", "item": item}
+
+        # Large upload via upload session
+        session = self._graph_request(
+            "POST",
+            f"/drives/{drive_id}/root:/{encoded_file_path}:/createUploadSession",
+            json_body={
+                "item": {
+                    "@microsoft.graph.conflictBehavior": "replace",
+                    "name": safe_name,
+                }
+            },
+        )
+
+        upload_url = (session or {}).get("uploadUrl") if isinstance(session, dict) else None
+        if not upload_url:
+            raise Exception("Failed to create upload session")
+
+        chunk_size = 10 * 1024 * 1024
+        start = 0
+        while start < size:
+            end = min(start + chunk_size, size)
+            chunk = content[start:end]
+            headers = {
+                "Content-Length": str(len(chunk)),
+                "Content-Range": f"bytes {start}-{end - 1}/{size}",
+            }
+            resp = requests.put(upload_url, headers=headers, data=chunk, timeout=120)
+            if resp.status_code in (200, 201):
+                try:
+                    item = resp.json() if resp.text else {}
+                except Exception:
+                    item = {}
+                return {"ok": True, "mode": "session", "item": item}
+
+            if resp.status_code == 202:
+                # Continue uploading next chunk.
+                start = end
+                continue
+
+            try:
+                payload = resp.json() if resp.text else {}
+            except Exception:
+                payload = {"error": "invalid_response", "error_description": resp.text}
+            raise Exception(str(payload))
+
+        # If loop ends without a final 200/201, treat as failure.
+        raise Exception("Upload session did not complete")
 
     def _paged_children(
         self,

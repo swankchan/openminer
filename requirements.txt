@@ -7,6 +7,7 @@ python-multipart>=0.0.18
 pypdf2==3.0.1
 pdf2image==1.16.3
 pillow>=11.0.0
+ocrmypdf>=16.6.0
 
 # MinerU vLLM support (optional, if using vllm-async-engine)
 # Installation options:

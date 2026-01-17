@@ -21,6 +21,11 @@ from config import (
     OLLAMA_TEMPERATURE
 )
 from config import AZURE_OPENAI_SYSTEM_PROMPT, AZURE_OPENAI_USER_PROMPT
+from config import (
+    AZURE_OPENAI_INCLUDE_IMAGES,
+    AZURE_OPENAI_INCLUDE_RAW_MINERU_JSON,
+    AZURE_OPENAI_RAW_JSON_MAX_CHARS,
+)
 
 
 load_dotenv()
@@ -151,6 +156,7 @@ class AzureAIService:
         system_prompt_override: Optional[str] = None,
         user_prompt_override: Optional[str] = None,
         markdown_content: Optional[str] = None,
+        image_data_urls: Optional[list[str]] = None,
     ) -> Path:
         """
         Generate structured output (JSON) from MinerU JSON or PDFs.
@@ -299,6 +305,25 @@ class AzureAIService:
                     prompt = self._create_extraction_prompt(mineru_json)
                 if APP_DEBUG:
                     print("[JSON_GENERATION]   Using default user_prompt")
+
+            # Optionally append raw MinerU JSON (can be large).
+            try:
+                include_raw = bool(AZURE_OPENAI_INCLUDE_RAW_MINERU_JSON)
+                if include_raw and mineru_json is not None and not markdown_content:
+                    raw = json.dumps(mineru_json, ensure_ascii=False)
+                    max_chars = int(AZURE_OPENAI_RAW_JSON_MAX_CHARS or 0)
+                    if max_chars > 0 and len(raw) > max_chars:
+                        raw = raw[:max_chars] + "\n... [TRUNCATED]\n"
+                        if APP_DEBUG:
+                            print(f"[JSON_GENERATION] ⚠ Raw MinerU JSON truncated to {max_chars} chars")
+                    prompt = (
+                        prompt
+                        + "\n\n[RAW_MINERU_JSON]\n"
+                        + raw
+                    )
+            except Exception as e:
+                if APP_DEBUG:
+                    print(f"[JSON_GENERATION] ⚠ Failed to append raw MinerU JSON: {e}")
             
             if APP_DEBUG:
                 prompt_length = len(prompt)
@@ -361,11 +386,27 @@ class AzureAIService:
                 # Use Azure OpenAI.
                 if progress_callback:
                     await progress_callback(40, "AI generating…", "call_azure_openai")
+
+                # If we have images and multimodal is enabled, send user content as [text + images].
+                use_images = bool(AZURE_OPENAI_INCLUDE_IMAGES) and bool(image_data_urls)
+                user_content: Any
+                if use_images:
+                    parts = [{"type": "text", "text": prompt}]
+                    for url in image_data_urls or []:
+                        if not url:
+                            continue
+                        parts.append({"type": "image_url", "image_url": {"url": url}})
+                    user_content = parts
+                    if APP_DEBUG:
+                        print(f"[JSON_GENERATION]   Including {len(parts) - 1} image(s) in Azure OpenAI request")
+                else:
+                    user_content = prompt
+
                 request_kwargs = {
                     "model": self.deployment_name,
                     "messages": [
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt},
+                        {"role": "user", "content": user_content},
                     ],
                     "temperature": self.azure_openai_temperature,
                 }
@@ -504,8 +545,15 @@ class AzureAIService:
         if system_override is not None or user_override is not None:
             return system_override, user_override
 
-        system_prompt = AZURE_OPENAI_SYSTEM_PROMPT if 'AZURE_OPENAI_SYSTEM_PROMPT' in globals() and AZURE_OPENAI_SYSTEM_PROMPT else None
-        user_prompt = AZURE_OPENAI_USER_PROMPT if 'AZURE_OPENAI_USER_PROMPT' in globals() and AZURE_OPENAI_USER_PROMPT else None
+        # Read from process environment so updates via load_dotenv(override=True) take effect
+        # without requiring an app restart. Store newlines in .env as literal "\\n" sequences.
+        system_prompt = os.getenv("AZURE_OPENAI_SYSTEM_PROMPT") or None
+        user_prompt = os.getenv("AZURE_OPENAI_USER_PROMPT") or None
+
+        if system_prompt:
+            system_prompt = system_prompt.replace("\\\\n", "\n").replace("\\n", "\n")
+        if user_prompt:
+            user_prompt = user_prompt.replace("\\\\n", "\n").replace("\\n", "\n")
 
         # Fallback to legacy single PROMPT text if user_prompt not provided
         if not user_prompt and AZURE_OPENAI_CUSTOM_PROMPT:
