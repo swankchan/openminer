@@ -374,12 +374,13 @@ class MinerUService:
             hybrid_folder = method_to_folder.get(MINERU_METHOD, "hybrid_auto")
             
             # Execute MinerU CLI, -m ocr/auto/txt
+            # -b pipeline / hybrid-auto-engine (ONLY WHEN YOU HAVE RTX5090!)
             cmd = [
                 os.getenv("MINERU_CMD", "mineru"),
                 "-p", str(pdf_path),
                 "-o", str(output_path),
                 "-m", MINERU_METHOD,
-                "-b", str("pipeline")
+                "-b", str("pipeline"),
             ]
             
             # Send initial progress.

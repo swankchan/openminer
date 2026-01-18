@@ -319,6 +319,10 @@ OCR_OPTIMIZE = _env_int("OCR_OPTIMIZE", 0)
 # Allow forcing OCRmyPDF even if the PDF already has text (in addition to FORCE_OCR)
 OCR_FORCE_REDO = _env_bool("OCR_FORCE_REDO", False)
 
+# Optional: pass OCRmyPDF image_dpi (assume this DPI when input pages lack DPI metadata)
+_ocr_image_dpi_raw = _env_str("OCR_IMAGE_DPI", "").strip()
+OCR_IMAGE_DPI: int | None = int(_ocr_image_dpi_raw) if _ocr_image_dpi_raw else None
+
 # Optional: explicitly point to a tessdata directory (or its parent) when Tesseract
 # can't find configs like 'hocr'/'txt' on Windows.
 OCR_TESSDATA_PREFIX = _env_str("OCR_TESSDATA_PREFIX", "")

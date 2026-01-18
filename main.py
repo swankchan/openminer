@@ -46,6 +46,7 @@ from config import (
     OCR_JOBS,
     OCR_OPTIMIZE,
     OCR_FORCE_REDO,
+    OCR_IMAGE_DPI,
     OCR_TESSDATA_PREFIX,
 )
 import re
@@ -1334,6 +1335,7 @@ async def process_pdf_file(
                     rotate=bool(OCR_ROTATE_PAGES),
                     jobs=int(OCR_JOBS),
                     optimize=int(OCR_OPTIMIZE),
+                    image_dpi=OCR_IMAGE_DPI,
                     tessdata_prefix=(Path(str(OCR_TESSDATA_PREFIX)).expanduser() if str(OCR_TESSDATA_PREFIX).strip() else None),
                 )
                 if not searchable_pdf_path or (not Path(searchable_pdf_path).exists()):

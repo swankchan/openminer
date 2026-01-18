@@ -119,6 +119,7 @@ def ocr_to_searchable_pdf(
     rotate: bool = False,
     jobs: int = 1,
     optimize: int = 0,
+    image_dpi: Optional[int] = None,
     tessdata_prefix: Optional[Path] = None,
 ) -> Path:
     """Run OCRmyPDF to produce a searchable (text-layer) PDF.
@@ -157,6 +158,7 @@ def ocr_to_searchable_pdf(
         rotate_pages=bool(rotate),
         optimize=int(optimize),
         jobs=max(1, int(jobs)),
+        image_dpi=int(image_dpi) if image_dpi is not None else None,
         progress_bar=False,
     )
 
@@ -229,6 +231,15 @@ def _parse_args() -> argparse.Namespace:
             "Levels 2-3 may require external tools like pngquant."
         ),
     )
+    parser.add_argument(
+        "--image-dpi",
+        type=int,
+        default=None,
+        help=(
+            "Assume this DPI when input pages lack DPI metadata (OCRmyPDF image_dpi). "
+            "Use when scanned images/PDFs have unknown/incorrect DPI."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -276,6 +287,7 @@ def main() -> int:
             rotate=args.rotate,
             jobs=args.jobs,
             optimize=args.optimize,
+            image_dpi=args.image_dpi,
             tessdata_prefix=Path(args.tessdata_prefix).expanduser() if args.tessdata_prefix else None,
         )
     except Exception as exc:
