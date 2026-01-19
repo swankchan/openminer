@@ -1,3 +1,6 @@
+# Deployment Summary 
+# 2026-01-18 Conda env create -f environment.yml failed initially.  Gradio library's dependency - pillow's version incompatible. And, VLLM also failed to built. So, remove them from environment.yml. Second, don't know why tesseract could not be run.  Remove from environment and explicitly install, download from web.
+
 # Deployment (Make It Usable Online)
 
 This app is a FastAPI (ASGI) service served by Uvicorn. The easiest way to run it online is to deploy the Docker container and put it behind an HTTPS reverse proxy.

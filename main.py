@@ -53,6 +53,261 @@ import re
 from dotenv import load_dotenv, dotenv_values
 from urllib.parse import urlparse
 
+
+def _parse_sp_activate(raw: str) -> str:
+    s = _strip_wrapping_quotes(raw or "").strip()
+    if not s:
+        return "NONE"
+    low = s.lower()
+    if low in ("0", "false", "no", "off", "none", "disabled", "deactivated"):
+        return "NONE"
+    if low in ("non_prod", "non-prod", "nonproduction", "non-production"):
+        return "NON_PROD"
+    if low in ("prod", "production"):
+        return "PROD"
+    up = s.upper()
+    return up if up in ("NONE", "NON_PROD", "PROD") else "NONE"
+
+
+def _normalize_sp_folder_env_path(raw: str) -> str:
+    """Normalize folder paths stored in .env.
+
+    Supports values like:
+            Non-Production\\Inbox
+      Non-Production/Inbox
+      /Non-Production/Inbox
+    Returns a Graph-usable folder path string (leading slash).
+    """
+    s = _strip_wrapping_quotes(raw or "").strip()
+    s = s.replace("\\", "/")
+    s = s.strip()
+    while "//" in s:
+        s = s.replace("//", "/")
+    s = s.lstrip("/")
+    return "/" + s if s else "/"
+
+
+def _sp_processed_name(inbox_folder_norm: str, file_server_rel: str, original_name: str) -> str:
+    """Generate a stable destination filename for processed items.
+
+    If the file is in a subfolder under the inbox, encode that relative path into the name
+    to reduce collisions when moving everything into one processed folder.
+    """
+    inbox = (inbox_folder_norm or "/").rstrip("/")
+    src = (file_server_rel or "").strip()
+    if not src:
+        return Path(str(original_name or "")).name
+
+    # Try to compute relative path within the inbox folder.
+    rel = src
+    if inbox and src.startswith(inbox + "/"):
+        rel = src[len(inbox) + 1 :]
+    rel = rel.lstrip("/")
+    if not rel:
+        return Path(str(original_name or "")).name
+    return rel.replace("/", "__").replace("\\", "__")
+
+
+def _sp_relative_subdir(inbox_folder_norm: str, file_server_rel: str) -> str:
+    """Return the subfolder path (relative) under the inbox for a file.
+
+    Example:
+      inbox=/Non-production/Inbox
+      file=/sites/X/Shared Documents/Non-production/Inbox/Beverage/A/x.pdf
+      -> Beverage/A
+
+    Returns "" when file is directly under inbox or when the inbox prefix can't be located.
+    """
+    inbox = (inbox_folder_norm or "").replace("\\", "/")
+    file_path = (file_server_rel or "").replace("\\", "/")
+
+    inbox = "/" + inbox.strip("/") if inbox.strip("/") else "/"
+    file_path = "/" + file_path.lstrip("/") if file_path else ""
+
+    inbox_low = inbox.lower().rstrip("/")
+    file_low = file_path.lower()
+
+    rel = ""
+    prefix = inbox_low + "/"
+    if file_low.startswith(prefix):
+        rel = file_path[len(inbox.rstrip("/")) + 1 :]
+    else:
+        token = "/" + inbox.strip("/").lower().rstrip("/") + "/"
+        idx = file_low.find(token)
+        if idx >= 0:
+            rel = file_path[idx + len(token) :]
+
+    rel = rel.strip("/")
+    if not rel:
+        return ""
+    parent = str(Path(rel).parent).replace("\\", "/")
+    if parent in (".", ""):
+        return ""
+    return parent.strip("/")
+
+
+async def _sharepoint_auto_ingest_loop(app: FastAPI, stop_event: asyncio.Event, wake_event: asyncio.Event) -> None:
+    """Background worker: when SP_ACTIVATE is enabled, process PDFs under the configured inbox."""
+    in_progress: Set[str] = set()
+    env_path = BASE_DIR / ".env"
+
+    while not stop_event.is_set():
+        # Reload env each cycle so UI changes take effect without restart.
+        try:
+            load_dotenv(dotenv_path=str(env_path), override=True)
+        except Exception:
+            pass
+        try:
+            sharepoint_service.reload_from_env()
+        except Exception:
+            pass
+
+        runtime_mode = getattr(getattr(app, "state", None), "sp_activate_runtime", None)
+        if isinstance(runtime_mode, str) and runtime_mode:
+            mode = _parse_sp_activate(runtime_mode)
+        else:
+            mode = _parse_sp_activate(os.getenv("SP_ACTIVATE") or "")
+
+        # Poll interval (seconds)
+        poll_s = 60
+        poll_raw = _strip_wrapping_quotes(os.getenv("SHAREPOINT_POLL_INTERVAL") or "")
+        if poll_raw:
+            try:
+                poll_s = max(5, int(float(str(poll_raw).split("#", 1)[0].strip())))
+            except Exception:
+                poll_s = 60
+
+        if mode == "NONE":
+            # Sleep (or wake early if user toggles)
+            try:
+                await asyncio.wait_for(wake_event.wait(), timeout=float(poll_s))
+            except asyncio.TimeoutError:
+                pass
+            wake_event.clear()
+            continue
+
+        if mode == "NON_PROD":
+            inbox_env = os.getenv("SP_NON_PROD_INBOX_DIR") or ""
+            processed_env = os.getenv("SP_NON_PROD_PROCESSED_DIR") or ""
+        else:
+            inbox_env = os.getenv("SP_PROD_INBOX_DIR") or ""
+            processed_env = os.getenv("SP_PROD_PROCESSED_DIR") or ""
+
+        inbox_folder = _normalize_sp_folder_env_path(inbox_env)
+        processed_folder = _normalize_sp_folder_env_path(processed_env)
+
+        if DEBUG:
+            print(f"[SP_AUTO] mode={mode} inbox={inbox_folder} processed={processed_folder} poll={poll_s}s")
+
+        try:
+            pdf_items = await asyncio.to_thread(
+                sharepoint_service.list_pdf_files_recursive,
+                inbox_folder,
+            )
+        except Exception as e:
+            if DEBUG:
+                print(f"[SP_AUTO] list failed: {e}")
+            pdf_items = []
+
+        for it in pdf_items:
+            if stop_event.is_set():
+                break
+            server_rel = str(it.get("server_relative_url") or "").strip()
+            if not server_rel:
+                continue
+            if server_rel in in_progress:
+                continue
+            in_progress.add(server_rel)
+
+            try:
+                # Download
+                local_pdf = await sharepoint_service.download_file(server_rel, None)
+                file_id = str(uuid.uuid4())
+                base_name = sanitize_filename(local_pdf.name)
+
+                # Enqueue processing through the same pipeline used by manual upload/sharepoint processing.
+                pq: ProcessingQueue = app.state.processing_queue
+                result = await pq.enqueue(
+                    f"SP_AUTO:{base_name}",
+                    None,
+                    lambda: process_pdf_file(
+                        file_path=local_pdf,
+                        file_id=file_id,
+                        base_name=base_name,
+                        mineru_json_variant=None,
+                    ),
+                )
+
+                # Move to Processed folder (best-effort)
+                if processed_folder and processed_folder != "/":
+                    try:
+                        subdir = _sp_relative_subdir(inbox_folder, server_rel)
+                        dest_folder = processed_folder.rstrip("/")
+                        if subdir:
+                            dest_folder = f"{dest_folder}/{subdir}"
+
+                        await asyncio.to_thread(
+                            sharepoint_service.ensure_folder_path,
+                            dest_folder,
+                        )
+
+                        await asyncio.to_thread(
+                            sharepoint_service.move_item,
+                            server_rel,
+                            dest_folder,
+                        )
+
+                        # Upload outputs (best-effort) into the same processed folder.
+                        if isinstance(result, dict):
+                            template_csv_path = result.get("template_csv_path")
+                            searchable_pdf_path = result.get("searchable_pdf_path")
+
+                            if template_csv_path:
+                                try:
+                                    csv_p = Path(str(template_csv_path))
+                                    if csv_p.exists():
+                                        csv_bytes = await asyncio.to_thread(csv_p.read_bytes)
+                                        await asyncio.to_thread(
+                                            sharepoint_service.upload_file,
+                                            dest_folder,
+                                            csv_p.name,
+                                            csv_bytes,
+                                        )
+                                except Exception as ue:
+                                    if DEBUG:
+                                        print(f"[SP_AUTO] upload template CSV failed ({server_rel}): {ue}")
+
+                            if searchable_pdf_path:
+                                try:
+                                    spdf_p = Path(str(searchable_pdf_path))
+                                    if spdf_p.exists():
+                                        spdf_bytes = await asyncio.to_thread(spdf_p.read_bytes)
+                                        await asyncio.to_thread(
+                                            sharepoint_service.upload_file,
+                                            dest_folder,
+                                            spdf_p.name,
+                                            spdf_bytes,
+                                        )
+                                except Exception as ue:
+                                    if DEBUG:
+                                        print(f"[SP_AUTO] upload searchable PDF failed ({server_rel}): {ue}")
+                    except Exception as me:
+                        if DEBUG:
+                            print(f"[SP_AUTO] move failed ({server_rel}): {me}")
+
+            except Exception as e:
+                if DEBUG:
+                    print(f"[SP_AUTO] processing failed ({server_rel}): {e}")
+            finally:
+                in_progress.discard(server_rel)
+
+        # Wait for next cycle (or wake early)
+        try:
+            await asyncio.wait_for(wake_event.wait(), timeout=float(poll_s))
+        except asyncio.TimeoutError:
+            pass
+        wake_event.clear()
+
 # 初始化服務（全域變數）
 pdf_processor = PDFProcessor()
 mineru_service = MinerUService()
@@ -454,12 +709,27 @@ async def lifespan(app: FastAPI):
     else:
         if DEBUG:
             print("[APP] MinerU 將在第一次使用時才初始化（INIT_MINERU_ON_STARTUP=False）")
+
+    # SharePoint auto-ingest worker (optional; controlled by SP_ACTIVATE)
+    app.state.sp_auto_stop = asyncio.Event()
+    app.state.sp_auto_wake = asyncio.Event()
+    app.state.sp_auto_task = asyncio.create_task(
+        _sharepoint_auto_ingest_loop(app, app.state.sp_auto_stop, app.state.sp_auto_wake)
+    )
     
     yield
     
     # 關閉時清理資源
     try:
         await app.state.processing_queue.stop()
+    except Exception:
+        pass
+
+    # Stop SharePoint auto-ingest worker
+    try:
+        app.state.sp_auto_stop.set()
+        app.state.sp_auto_wake.set()
+        await asyncio.wait_for(app.state.sp_auto_task, timeout=5)
     except Exception:
         pass
 
@@ -545,6 +815,12 @@ async def get_sharepoint_settings():
     link = _strip_wrapping_quotes(values.get("SHAREPOINT_LINK") or values.get("SHAREPOINT_SITE_URL") or "")
     folder = _strip_wrapping_quotes(values.get("SHAREPOINT_FOLDER") or "")
 
+    sp_activate = _parse_sp_activate(_strip_wrapping_quotes(values.get("SP_ACTIVATE") or ""))
+    sp_non_prod_inbox = _strip_wrapping_quotes(values.get("SP_NON_PROD_INBOX_DIR") or "")
+    sp_non_prod_processed = _strip_wrapping_quotes(values.get("SP_NON_PROD_PROCESSED_DIR") or "")
+    sp_prod_inbox = _strip_wrapping_quotes(values.get("SP_PROD_INBOX_DIR") or "")
+    sp_prod_processed = _strip_wrapping_quotes(values.get("SP_PROD_PROCESSED_DIR") or "")
+
     poll_raw = _strip_wrapping_quotes(values.get("SHAREPOINT_POLL_INTERVAL") or "")
     poll_interval: Optional[int] = None
     if poll_raw:
@@ -564,7 +840,48 @@ async def get_sharepoint_settings():
         "folder": folder,
         "poll_interval": poll_interval,
         "secret_set": secret_set,
+        "sp_activate": sp_activate,
+        "sp_non_prod_inbox_dir": sp_non_prod_inbox,
+        "sp_non_prod_processed_dir": sp_non_prod_processed,
+        "sp_prod_inbox_dir": sp_prod_inbox,
+        "sp_prod_processed_dir": sp_prod_processed,
     }
+
+
+@app.get("/api/settings/sharepoint/activate")
+async def get_sharepoint_activate():
+    runtime_mode = getattr(getattr(app, "state", None), "sp_activate_runtime", None)
+    if isinstance(runtime_mode, str) and runtime_mode:
+        return {"mode": _parse_sp_activate(runtime_mode), "source": "runtime"}
+
+    env_path = BASE_DIR / ".env"
+    values = dict(dotenv_values(env_path)) if env_path.exists() else dict(os.environ)
+    mode = _parse_sp_activate(_strip_wrapping_quotes(values.get("SP_ACTIVATE") or ""))
+    return {"mode": mode, "source": "env"}
+
+
+@app.post("/api/settings/sharepoint/activate")
+async def set_sharepoint_activate(payload: Dict[str, Any] = Body(...)):
+    raw = payload.get("mode")
+    mode = _parse_sp_activate(str(raw) if raw is not None else "")
+
+    # Runtime-only toggle: do NOT persist SP_ACTIVATE to .env.
+    # This ensures SP_ACTIVATE stays e.g. NONE in .env even if the UI activates.
+    try:
+        if mode == "NONE":
+            app.state.sp_activate_runtime = None
+        else:
+            app.state.sp_activate_runtime = mode
+    except Exception:
+        pass
+
+    # Wake the background worker so changes take effect immediately.
+    try:
+        app.state.sp_auto_wake.set()
+    except Exception:
+        pass
+
+    return {"status": "ok", "mode": mode, "source": "runtime"}
 
 
 @app.post("/api/settings/sharepoint")
@@ -594,6 +911,16 @@ async def set_sharepoint_settings(payload: Dict[str, Any] = Body(...)):
         "SHAREPOINT_LINK": link,
         "SHAREPOINT_FOLDER": folder,
     }
+
+    # Note: SP_ACTIVATE is intentionally NOT persisted here; activation is runtime-only.
+    if "sp_non_prod_inbox_dir" in payload:
+        updates["SP_NON_PROD_INBOX_DIR"] = _strip_wrapping_quotes(str(payload.get("sp_non_prod_inbox_dir") or ""))
+    if "sp_non_prod_processed_dir" in payload:
+        updates["SP_NON_PROD_PROCESSED_DIR"] = _strip_wrapping_quotes(str(payload.get("sp_non_prod_processed_dir") or ""))
+    if "sp_prod_inbox_dir" in payload:
+        updates["SP_PROD_INBOX_DIR"] = _strip_wrapping_quotes(str(payload.get("sp_prod_inbox_dir") or ""))
+    if "sp_prod_processed_dir" in payload:
+        updates["SP_PROD_PROCESSED_DIR"] = _strip_wrapping_quotes(str(payload.get("sp_prod_processed_dir") or ""))
     if poll_interval != "":
         updates["SHAREPOINT_POLL_INTERVAL"] = poll_interval
 
@@ -619,6 +946,12 @@ async def set_sharepoint_settings(payload: Dict[str, Any] = Body(...)):
         sharepoint_service.reload_from_env()
     except Exception:
         # If reload fails, the settings are still saved; user can restart the app.
+        pass
+
+    # Wake the background worker in case poll interval / activation changed.
+    try:
+        app.state.sp_auto_wake.set()
+    except Exception:
         pass
 
     # Never return secret
@@ -1053,11 +1386,16 @@ async def delete_sharepoint_item(payload: Dict[str, Any] = Body(...)):
             pass
         sharepoint_service.reload_from_env()
 
+        drive_id = str((payload or {}).get("drive_id") or "").strip()
+        item_id = str((payload or {}).get("item_id") or "").strip()
         path = str((payload or {}).get("path") or "").strip()
-        if not path:
-            raise HTTPException(status_code=400, detail="Missing 'path'")
 
-        result = await asyncio.to_thread(sharepoint_service.delete_item, path)
+        if drive_id and item_id:
+            result = await asyncio.to_thread(sharepoint_service.delete_item_by_id, drive_id, item_id)
+        else:
+            if not path:
+                raise HTTPException(status_code=400, detail="Missing 'path' (or provide drive_id + item_id)")
+            result = await asyncio.to_thread(sharepoint_service.delete_item, path)
         return JSONResponse(content=result)
     except HTTPException:
         raise

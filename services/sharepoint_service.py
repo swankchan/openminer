@@ -455,7 +455,7 @@ class SharePointService:
 
             children = self._graph_request(
                 "GET",
-                f"/drives/{drive_id}/items/{item_id}/children?$select=name,webUrl,file,folder,size,createdDateTime,lastModifiedDateTime",
+                f"/drives/{drive_id}/items/{item_id}/children?$select=id,name,webUrl,file,folder,size,createdDateTime,lastModifiedDateTime",
             )
             values = list((children or {}).get("value") or [])
 
@@ -464,12 +464,16 @@ class SharePointService:
             for child in values:
                 name = child.get("name")
                 web_url = child.get("webUrl")
+                child_id = child.get("id")
                 server_rel = self._server_relative_from_web_url(str(web_url or ""))
 
                 if child.get("folder") is not None:
                     folder_items.append({
                         "name": name,
                         "server_relative_url": server_rel,
+                        "web_url": web_url,
+                        "drive_id": drive_id,
+                        "item_id": child_id,
                         "created_date_time": child.get("createdDateTime"),
                         "last_modified_date_time": child.get("lastModifiedDateTime"),
                     })
@@ -478,6 +482,9 @@ class SharePointService:
                     file_items.append({
                         "name": name,
                         "server_relative_url": server_rel,
+                        "web_url": web_url,
+                        "drive_id": drive_id,
+                        "item_id": child_id,
                         "is_pdf": is_pdf,
                         "size": child.get("size"),
                         "created_date_time": child.get("createdDateTime"),
@@ -519,6 +526,19 @@ class SharePointService:
         self._graph_request("DELETE", f"/drives/{drive_id}/items/{item_id}")
         return {"ok": True, "path": target}
 
+    def delete_item_by_id(self, drive_id: str, item_id: str) -> Dict[str, Any]:
+        """Delete a file/folder by (drive_id, item_id).
+
+        This is more reliable than server-relative paths for Office docs that may have
+        webUrl like /_layouts/15/Doc.aspx?... which does not map cleanly to a drive path.
+        """
+        d = str(drive_id or "").strip()
+        i = str(item_id or "").strip()
+        if not d or not i:
+            raise Exception("Missing drive_id or item_id")
+        self._graph_request("DELETE", f"/drives/{d}/items/{i}")
+        return {"ok": True, "drive_id": d, "item_id": i}
+
     def upload_file(self, folder_path: str, filename: str, content: bytes) -> Dict[str, Any]:
         """Upload a file to a SharePoint folder.
 
@@ -527,6 +547,14 @@ class SharePointService:
         folder_norm = self._normalize_server_relative_path(folder_path)
         if not folder_norm:
             folder_norm = "/"
+
+        # Allow uploading into folders that don't exist yet (folder upload / hierarchy preserve).
+        # This will create intermediate folders as needed.
+        try:
+            self.ensure_folder_path(folder_norm)
+        except Exception:
+            # If ensure fails, we still try resolving; the call will raise a clearer error.
+            pass
 
         safe_name = Path(str(filename or "")).name.strip()
         if not safe_name:
@@ -627,6 +655,74 @@ class SharePointService:
             url = str(next_link) if next_link else ""
 
         return items
+
+    def ensure_folder_path(self, folder_path: str) -> Dict[str, Any]:
+        """Ensure a folder path exists (create missing segments).
+
+        Accepts a server-relative folder path (e.g. /Non-Production/Processed/A/B)
+        and creates intermediate folders within the mapped drive.
+
+        Returns a minimal dict describing the resolved folder.
+        """
+        folder_norm = self._normalize_server_relative_path(folder_path)
+        drive_id, drive_rel = self._map_server_relative_to_drive(folder_norm)
+        drive_id = str(drive_id or "")
+        drive_rel = str(drive_rel or "").strip("/")
+        if not drive_id:
+            raise Exception("Unable to map folder path to a drive")
+
+        # Start at drive root.
+        root_item = self._graph_request(
+            "GET",
+            f"/drives/{drive_id}/root?$select=id,name,webUrl,file,folder,parentReference",
+        )
+        parent_id = str((root_item or {}).get("id") or "")
+        if not parent_id:
+            raise Exception("Unable to resolve drive root")
+
+        # No subfolders -> root.
+        if not drive_rel:
+            return {"ok": True, "drive_id": drive_id, "item_id": parent_id, "path": folder_norm}
+
+        parts = [p for p in drive_rel.split("/") if p]
+        for part in parts:
+            # Look for existing child folder with this name.
+            children = self._paged_children(drive_id, parent_id, select="id,name,folder")
+            found = None
+            for c in children:
+                name = str(c.get("name") or "")
+                if name.lower() == str(part).lower() and c.get("folder") is not None:
+                    found = c
+                    break
+
+            if found is None:
+                payload = {
+                    "name": str(part),
+                    "folder": {},
+                    "@microsoft.graph.conflictBehavior": "fail",
+                }
+                try:
+                    found = self._graph_request(
+                        "POST",
+                        f"/drives/{drive_id}/items/{parent_id}/children",
+                        json_body=payload,
+                    )
+                except Exception:
+                    # Possible race/name conflict; try finding it again.
+                    children = self._paged_children(drive_id, parent_id, select="id,name,folder")
+                    for c in children:
+                        name = str(c.get("name") or "")
+                        if name.lower() == str(part).lower() and c.get("folder") is not None:
+                            found = c
+                            break
+                    if found is None:
+                        raise
+
+            parent_id = str(found.get("id") or "")
+            if not parent_id:
+                raise Exception(f"Unable to resolve/create folder: {part}")
+
+        return {"ok": True, "drive_id": drive_id, "item_id": parent_id, "path": folder_norm}
 
     def get_folder_tree(
         self,
@@ -869,4 +965,130 @@ class SharePointService:
             
         except Exception as e:
             raise Exception(f"Error listing SharePoint files: {str(e)}")
+
+
+    def list_pdf_files_recursive(
+        self,
+        folder_path: str = "/",
+        *,
+        max_nodes: int = 5000,
+        max_files: int = 5000,
+    ) -> List[Dict[str, Any]]:
+        """List PDF files in a folder and all subfolders (recursive).
+
+        Returns list items like:
+          {"name": "a.pdf", "server_relative_url": "/sites/.../a.pdf"}
+
+        Safety limits:
+        - max_nodes caps total folders visited
+        - max_files caps total PDFs collected
+        """
+        folder_norm = self._normalize_server_relative_path(folder_path)
+        root_item = self._resolve_drive_item_from_server_relative(folder_norm)
+        drive_id = str(root_item.get("_drive_id") or "")
+        item_id = str(root_item.get("id") or "")
+        if not drive_id or not item_id:
+            return []
+        if root_item.get("file") is not None:
+            return []
+
+        visited_folders = 0
+        results: List[Dict[str, Any]] = []
+        seen_folder_ids: set[str] = set()
+
+        stack: List[Tuple[str, str]] = [(drive_id, item_id)]
+        while stack:
+            d_id, f_id = stack.pop()
+            if not f_id:
+                continue
+            if f_id in seen_folder_ids:
+                continue
+            seen_folder_ids.add(f_id)
+
+            visited_folders += 1
+            if visited_folders > max_nodes:
+                break
+
+            children = self._paged_children(
+                d_id,
+                f_id,
+                select="id,name,webUrl,file,folder,lastModifiedDateTime,createdDateTime",
+            )
+
+            for child in children:
+                if len(results) >= max_files:
+                    break
+                name = str(child.get("name") or "")
+                web_url = str(child.get("webUrl") or "")
+                server_rel = self._server_relative_from_web_url(web_url)
+
+                if child.get("folder") is not None:
+                    # DFS
+                    stack.append((d_id, str(child.get("id") or "")))
+                    continue
+
+                if name.lower().endswith(".pdf") and server_rel:
+                    results.append({
+                        "name": name,
+                        "server_relative_url": server_rel,
+                        "last_modified": child.get("lastModifiedDateTime"),
+                        "created": child.get("createdDateTime"),
+                    })
+
+            if len(results) >= max_files:
+                break
+
+        # Prefer stable ordering for deterministic processing: oldest first.
+        def _sort_key(it: Dict[str, Any]) -> Tuple[str, str]:
+            created = str(it.get("created") or "")
+            name = str(it.get("name") or "")
+            return (created, name.lower())
+
+        results.sort(key=_sort_key)
+        return results
+
+
+    def move_item(
+        self,
+        source_server_relative_path: str,
+        dest_folder_path: str,
+        *,
+        dest_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Move (and optionally rename) an item to another folder within the same drive."""
+        src = self._normalize_server_relative_path(source_server_relative_path)
+        dst = self._normalize_server_relative_path(dest_folder_path)
+        if not src:
+            raise Exception("Missing source path")
+        if not dst:
+            raise Exception("Missing destination folder")
+
+        src_item = self._resolve_drive_item_from_server_relative(src)
+        src_drive_id = str(src_item.get("_drive_id") or "")
+        src_item_id = str(src_item.get("id") or "")
+        if not src_drive_id or not src_item_id:
+            raise Exception("Unable to resolve source item")
+
+        dst_item = self._resolve_drive_item_from_server_relative(dst)
+        dst_drive_id = str(dst_item.get("_drive_id") or "")
+        dst_item_id = str(dst_item.get("id") or "")
+        if not dst_drive_id or not dst_item_id:
+            raise Exception("Unable to resolve destination folder")
+        if dst_item.get("file") is not None:
+            raise Exception("Destination path is a file, expected a folder")
+        if src_drive_id != dst_drive_id:
+            raise Exception("Move across different drives is not supported")
+
+        payload: Dict[str, Any] = {
+            "parentReference": {"id": dst_item_id},
+        }
+        if dest_name is not None and str(dest_name).strip():
+            payload["name"] = Path(str(dest_name)).name
+
+        moved = self._graph_request(
+            "PATCH",
+            f"/drives/{src_drive_id}/items/{src_item_id}",
+            json_body=payload,
+        )
+        return {"ok": True, "source": src, "dest_folder": dst, "item": moved}
 

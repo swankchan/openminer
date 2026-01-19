@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OpenMiner™</title>
-    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=2">
+    <link rel="icon" type="image/png" href="/static/OpenMiner.png">
     <link rel="alternate icon" href="/static/favicon.ico">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -314,9 +314,9 @@
             .header {
                 display: flex;
                 align-items: center;
-                justify-content: space-between;
+                justify-content: center;
                 gap: 18px;
-                text-align: left;
+                text-align: center;
                 margin-bottom: 12px;
             }
 
@@ -325,15 +325,7 @@
             }
 
             .subtitle {
-                margin: 0;
-                max-width: 560px;
-                text-align: right;
-                font-size: 0.85em;
-                line-height: 1.32;
-                padding: 10px 12px;
-                border-radius: 14px;
-                background: rgba(15, 23, 42, 0.04);
-                border: 1px solid rgba(15, 23, 42, 0.06);
+                display: none;
             }
         }
 
@@ -879,10 +871,19 @@
         }
 
         .logo-svg {
-            width: clamp(56px, 6vw, 72px);
-            height: clamp(56px, 6vw, 72px);
-            animation: logoFloat 3s ease-in-out infinite;
+            width: clamp(66px, 7vw, 86px);
+            height: clamp(66px, 7vw, 86px);
+            animation: none;
             filter: drop-shadow(0 14px 26px rgba(102, 126, 234, 0.22)) drop-shadow(0 10px 18px rgba(34, 193, 195, 0.14));
+        }
+
+        .logo-img {
+            width: clamp(66px, 7vw, 86px);
+            height: clamp(66px, 7vw, 86px);
+            animation: none;
+            filter: drop-shadow(0 14px 26px rgba(102, 126, 234, 0.22)) drop-shadow(0 10px 18px rgba(34, 193, 195, 0.14));
+            display: block;
+            object-fit: contain;
         }
 
         @keyframes logoFloat {
@@ -909,78 +910,9 @@
     <div class="container">
         <div class="header">
             <div class="logo">
-                <svg class="logo-svg" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" aria-label="OpenMiner app icon" role="img">
-                    <defs>
-                        <linearGradient id="omGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                            <stop offset="0%" stop-color="#667eea"/>
-                            <stop offset="45%" stop-color="#22c1c3"/>
-                            <stop offset="100%" stop-color="#ff6a88"/>
-                        </linearGradient>
-                        <linearGradient id="omRing" x1="0%" y1="0%" x2="100%" y2="0%">
-                            <stop offset="0%" stop-color="rgba(102,126,234,0.9)"/>
-                            <stop offset="35%" stop-color="rgba(34,193,195,0.9)"/>
-                            <stop offset="70%" stop-color="rgba(255,106,136,0.9)"/>
-                            <stop offset="100%" stop-color="rgba(118,75,162,0.9)"/>
-                        </linearGradient>
-                        <filter id="omShadow" x="-20%" y="-20%" width="140%" height="140%">
-                            <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="rgba(15, 23, 42, 0.28)"/>
-                            <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="rgba(102, 126, 234, 0.18)"/>
-                        </filter>
-                        <filter id="omGlow" x="-30%" y="-30%" width="160%" height="160%">
-                            <feGaussianBlur stdDeviation="6" result="blur"/>
-                            <feMerge>
-                                <feMergeNode in="blur"/>
-                                <feMergeNode in="SourceGraphic"/>
-                            </feMerge>
-                        </filter>
-                    </defs>
-
-                    <!-- Outer badge ring (more prominent) -->
-                    <circle cx="60" cy="60" r="54" fill="rgba(102, 126, 234, 0.08)"/>
-                    <circle cx="60" cy="60" r="52" fill="none" stroke="url(#omRing)" stroke-width="3.2" opacity="0.9"/>
-
-                    <!-- App Tile -->
-                    <g filter="url(#omShadow)">
-                        <rect x="24" y="26" width="72" height="70" rx="18" fill="url(#omGrad)"/>
-                        <rect x="28" y="30" width="64" height="62" rx="16" fill="rgba(255,255,255,0.14)"/>
-                    </g>
-
-                    <!-- Document (high contrast) -->
-                    <g>
-                        <path d="M44 40h22l10 10v30a8 8 0 0 1-8 8H44a8 8 0 0 1-8-8V48a8 8 0 0 1 8-8z" fill="rgba(255,255,255,0.92)"/>
-                        <path d="M66 40v10a4 4 0 0 0 4 4h10" fill="rgba(15,23,42,0.08)"/>
-                        <!-- Document lines -->
-                        <g stroke="rgba(15,23,42,0.35)" stroke-width="2.6" stroke-linecap="round">
-                            <line x1="42" y1="58" x2="76" y2="58"/>
-                            <line x1="42" y1="68" x2="72" y2="68"/>
-                            <line x1="42" y1="78" x2="66" y2="78"/>
-                        </g>
-                    </g>
-
-                    <!-- Pickaxe (dark outline + highlight, stays crisp when small) -->
-                    <g transform="translate(76, 34) rotate(-12)" filter="url(#omGlow)">
-                        <path d="M0 0 L0 28" stroke="#0b1024" stroke-width="5.2" stroke-linecap="round"/>
-                        <path d="M0 0 L0 28" stroke="rgba(255,255,255,0.55)" stroke-width="1.6" stroke-linecap="round"/>
-                        <path d="M0 26 L-14 36 L-10 42 L0 34 Z" fill="#0b1024"/>
-                        <path d="M0 26 L14 36 L10 42 L0 34 Z" fill="#0b1024"/>
-                        <circle cx="-4" cy="30" r="2.3" fill="rgba(255,255,255,0.9)"/>
-                        <circle cx="4" cy="30" r="2.3" fill="rgba(255,255,255,0.9)"/>
-                    </g>
-
-                    <!-- Spark (more visible, subtle flicker) -->
-                    <g filter="url(#omGlow)">
-                        <path d="M88 56 l3 6 l6 3 l-6 3 l-3 6 l-3-6 l-6-3 l6-3 z" fill="rgba(255,106,136,0.95)">
-                            <animate attributeName="opacity" values="0.95;0.35;0.95" dur="1.6s" repeatCount="indefinite"/>
-                        </path>
-                        <circle cx="82" cy="62" r="2.2" fill="rgba(34,193,195,0.95)">
-                            <animate attributeName="r" values="2.2;3.4;2.2" dur="1.9s" repeatCount="indefinite"/>
-                            <animate attributeName="opacity" values="0.95;0.35;0.95" dur="1.9s" repeatCount="indefinite"/>
-                        </circle>
-                    </g>
-                </svg>
+                <img class="logo-img" src="/static/OpenMiner.png" alt="OpenMiner" />
                 <span class="logo-text">OpenMiner™</span>
             </div>
-            <p class="subtitle" id="runtimeSubtitle">Loading runtime status…</p>
         </div>
 
         <div class="tabs">
@@ -1077,6 +1009,27 @@
                     <div class="form-group">
                         <label for="spPollInterval"><i class="fas fa-clock"></i> Poll interval (seconds)</label>
                         <input type="number" id="spPollInterval" min="1" step="1" placeholder="60" />
+                    </div>
+
+                    <div class="form-group">
+                        <label><i class="fas fa-toggle-on"></i> Activate</label>
+                        <div style="display:flex; gap:14px; flex-wrap:wrap; padding: 6px 2px;">
+                            <label style="display:flex; align-items:center; gap:8px; margin:0; cursor:pointer;">
+                                <input type="radio" name="spActivate" id="spActivateNone" value="NONE" checked onchange="onSharePointActivateChanged()" />
+                                <span>None</span>
+                            </label>
+                            <label style="display:flex; align-items:center; gap:8px; margin:0; cursor:pointer;">
+                                <input type="radio" name="spActivate" id="spActivateNonProd" value="NON_PROD" onchange="onSharePointActivateChanged()" />
+                                <span>Non-Production</span>
+                            </label>
+                            <label style="display:flex; align-items:center; gap:8px; margin:0; cursor:pointer;">
+                                <input type="radio" name="spActivate" id="spActivateProd" value="PROD" onchange="onSharePointActivateChanged()" />
+                                <span>Production</span>
+                            </label>
+                        </div>
+                        <div id="spActivateStatus" style="font-size: 12px; opacity: 0.8; margin-top: 6px;">
+                            Disabled by default. When enabled, the server will scan the configured Inbox folder and process PDFs automatically.
+                        </div>
                     </div>
                     <div style="display:flex; gap:10px;">
                         <button class="btn" type="button" onclick="loadSharePointSettings()" style="flex:1; padding: 12px 14px;">
@@ -1862,6 +1815,9 @@
                 document.getElementById('spDefaultFolder').value = data.folder || '';
                 document.getElementById('spPollInterval').value = (data.poll_interval !== null && data.poll_interval !== undefined) ? data.poll_interval : '';
 
+                // Activation mode
+                setSharePointActivateUi(data.sp_activate || 'NONE');
+
                 // Secret is intentionally not returned. Keep input blank.
                 document.getElementById('spSecret').value = '';
                 setSecretStatusText(Boolean(data.secret_set));
@@ -1907,6 +1863,45 @@
                 showResult('success', '<i class="fas fa-check-circle"></i> SharePoint settings saved.');
             } catch (e) {
                 showResult('error', '<i class="fas fa-times-circle"></i> Failed to save SharePoint settings: ' + e.message);
+            }
+        }
+
+        function getSharePointActivateUi() {
+            const el = document.querySelector('input[name="spActivate"]:checked');
+            return el ? (el.value || 'NONE') : 'NONE';
+        }
+
+        function setSharePointActivateUi(mode) {
+            const m = String(mode || 'NONE').toUpperCase();
+            const target = (m === 'NON_PROD') ? 'spActivateNonProd' : (m === 'PROD' ? 'spActivateProd' : 'spActivateNone');
+            const el = document.getElementById(target);
+            if (el) el.checked = true;
+
+            const box = document.getElementById('spActivateStatus');
+            if (box) {
+                if (m === 'NON_PROD') box.textContent = 'Activated: NON_PROD (auto-process Non-Production inbox)';
+                else if (m === 'PROD') box.textContent = 'Activated: PROD (auto-process Production inbox)';
+                else box.textContent = 'Deactivated: NONE (no automatic processing)';
+            }
+        }
+
+        async function onSharePointActivateChanged() {
+            const mode = getSharePointActivateUi();
+            try {
+                const response = await fetch('/api/settings/sharepoint/activate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    showResult('error', '<i class="fas fa-times-circle"></i> Failed to update activation: ' + (data.detail || 'Unknown error'));
+                    return;
+                }
+                setSharePointActivateUi(data.mode || mode);
+                showResult('success', '<i class="fas fa-check-circle"></i> SharePoint activation updated: ' + escapeHtml(String(data.mode || mode)));
+            } catch (e) {
+                showResult('error', '<i class="fas fa-times-circle"></i> Failed to update activation: ' + e.message);
             }
         }
 
@@ -2173,6 +2168,13 @@
                 const metaParts = [];
                 if (modified || created) metaParts.push(`<span title="${escapeHtml(modified || created)}">${escapeHtml(formatDateTime(modified || created))}</span>`);
                 const meta = metaParts.length ? `<div style="font-size: 11px; opacity: .75; margin-top: 2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${metaParts.join(' • ')}</div>` : '';
+                const payload = encodeURIComponent(JSON.stringify({
+                    name: name,
+                    path: url,
+                    drive_id: f.drive_id || '',
+                    item_id: f.item_id || ''
+                }));
+
                 return `
                     <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-radius:10px; background: rgba(255,255,255,0.55); margin-bottom:8px; cursor:pointer;" onclick="browseSharePoint('${encodeURIComponent(url)}')">
                         <div style="display:flex; align-items:center; gap:10px;">
@@ -2183,7 +2185,7 @@
                             </div>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <button class="btn" type="button" onclick="deleteSharePointItem(event, '${encodeURIComponent(url)}')" style="padding: 10px 12px; min-width: 46px;">
+                            <button class="btn" type="button" onclick="deleteSharePointItem(event, '${payload}')" style="padding: 10px 12px; min-width: 46px;">
                                 <span title="Delete"><i class="fas fa-trash"></i></span>
                             </button>
                             <i class="fas fa-chevron-right" style="opacity:.6;"></i>
@@ -2195,6 +2197,12 @@
             const fileHtml = files.map(f => {
                 const name = f.name || f.server_relative_url || '';
                 const url = f.server_relative_url || '';
+                const payload = encodeURIComponent(JSON.stringify({
+                    name: name,
+                    path: url,
+                    drive_id: f.drive_id || '',
+                    item_id: f.item_id || ''
+                }));
                 const isPdf = !!f.is_pdf;
                 const icon = isPdf ? 'fa-file-pdf' : 'fa-file';
                 const color = isPdf ? '#ef4444' : '#64748b';
@@ -2216,7 +2224,7 @@
                             </div>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <button class="btn" type="button" onclick="deleteSharePointItem(event, '${encodeURIComponent(url)}')" style="padding: 10px 12px; min-width: 46px;">
+                            <button class="btn" type="button" onclick="deleteSharePointItem(event, '${payload}')" style="padding: 10px 12px; min-width: 46px;">
                                 <span title="Delete"><i class="fas fa-trash"></i></span>
                             </button>
                             <button class="btn" type="button" onclick="selectSharePointFile(event, '${encodeURIComponent(url)}')" style="padding: 10px 12px; min-width: 92px;">
@@ -2331,13 +2339,25 @@
             uploadSharePointFiles(files, { preserveRelativePaths: true }).catch(() => {});
         }
 
-        function _sharePointSafeUploadName(file, preserveRelativePaths) {
-            const base = String((file && file.name) ? file.name : '').trim();
+        function _sharePointJoinPath(base, rel) {
+            const a = String(base || '').trim() || '/';
+            const b = String(rel || '').trim();
+            if (!b) return a;
+            const a2 = a.endsWith('/') ? a.slice(0, -1) : a;
+            const b2 = b.startsWith('/') ? b.slice(1) : b;
+            return (a2 || '/') + '/' + b2;
+        }
+
+        function _sharePointFolderForFile(baseFolder, file) {
             const rel = String((file && file.webkitRelativePath) ? file.webkitRelativePath : '').trim();
-            if (!preserveRelativePaths || !rel) return base;
-            // Preserve relative folder context in filename to avoid collisions.
-            // SharePoint upload endpoint currently uploads to a single folder path.
-            return rel.replaceAll('\\', '/').replaceAll('/', '__');
+            if (!rel) return (String(baseFolder || '').trim() || '/');
+            const clean = rel.replaceAll('\\', '/');
+            const parts = clean.split('/').filter(Boolean);
+            // parts: [rootFolder, ...subfolders, filename]
+            if (parts.length <= 1) return (String(baseFolder || '').trim() || '/');
+            // Include the root folder so SharePoint gets a real folder container.
+            const folderRel = parts.slice(0, -1).join('/');
+            return _sharePointJoinPath(baseFolder, folderRel);
         }
 
         async function uploadSharePointFiles(files, opts) {
@@ -2347,15 +2367,23 @@
                 return;
             }
 
-            const folder = (spBrowseCurrent || '/').trim() || '/';
+            const baseFolder = (spBrowseCurrent || '/').trim() || '/';
             try {
-                showResult('success', `<div><i class="fas fa-spinner fa-spin"></i> Uploading ${files.length} file(s) to ${escapeHtml(folder)}…</div>`);
+                showResult('success', `<div><i class="fas fa-spinner fa-spin"></i> Uploading ${files.length} file(s) to ${escapeHtml(baseFolder)}…</div>`);
+
+                const ensured = new Set();
 
                 for (const f of files) {
                     const fd = new FormData();
-                    fd.append('folder_path', folder);
-                    const uploadName = _sharePointSafeUploadName(f, preserveRelativePaths);
-                    fd.append('file', f, uploadName);
+                    const targetFolder = preserveRelativePaths ? _sharePointFolderForFile(baseFolder, f) : baseFolder;
+                    fd.append('folder_path', targetFolder);
+                    // Keep original filename; folder hierarchy is handled by folder_path.
+                    fd.append('file', f, String((f && f.name) ? f.name : 'file'));
+
+                    // Avoid redundant ensure calls on backend by clustering folder uploads.
+                    if (preserveRelativePaths && targetFolder && !ensured.has(targetFolder)) {
+                        ensured.add(targetFolder);
+                    }
                     const resp = await fetch('/api/sharepoint/upload', { method: 'POST', body: fd });
                     const data = await resp.json();
                     if (!resp.ok) {
@@ -2369,27 +2397,40 @@
                 if (inputFolder) inputFolder.value = '';
                 setSharePointUploadSummary('Upload completed');
                 showResult('success', `<div><i class="fas fa-check-circle"></i> Upload completed.</div>`);
-                await browseSharePoint(folder);
+                await browseSharePoint(baseFolder);
             } catch (e) {
                 showResult('error', '<i class="fas fa-times-circle"></i> Upload failed: ' + escapeHtml(e.message || String(e)));
             }
         }
 
-        async function deleteSharePointItem(evt, encodedUrl) {
+        async function deleteSharePointItem(evt, encodedPayload) {
             if (evt) evt.stopPropagation();
-            let url = '';
-            try { url = decodeURIComponent(encodedUrl || ''); } catch (_) { url = encodedUrl || ''; }
-            url = String(url || '').trim();
-            if (!url) return;
+            let payloadRaw = '';
+            try { payloadRaw = decodeURIComponent(encodedPayload || ''); } catch (_) { payloadRaw = encodedPayload || ''; }
 
-            const ok = confirm('Delete this item?\n\n' + url);
+            let payload = null;
+            try { payload = JSON.parse(payloadRaw); } catch (_) { payload = null; }
+
+            const url = String((payload && payload.path) ? payload.path : payloadRaw).trim();
+            const name = String((payload && payload.name) ? payload.name : '').trim();
+            const driveId = String((payload && payload.drive_id) ? payload.drive_id : '').trim();
+            const itemId = String((payload && payload.item_id) ? payload.item_id : '').trim();
+
+            if (!url && !(driveId && itemId)) return;
+
+            const label = name ? name : url;
+            const ok = confirm('Delete this item?\n\n' + label);
             if (!ok) return;
 
             try {
                 const resp = await fetch('/api/sharepoint/delete', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ path: url })
+                    body: JSON.stringify({
+                        path: url,
+                        drive_id: driveId,
+                        item_id: itemId
+                    })
                 });
                 const data = await resp.json();
                 if (!resp.ok || !(data && data.ok)) {
