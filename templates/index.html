@@ -1003,8 +1003,21 @@
                         </div>
                     </div>
                     <div class="form-group">
-                        <label for="spDefaultFolder"><i class="fas fa-folder"></i> Default folder</label>
-                        <input type="text" id="spDefaultFolder" placeholder="e.g.: /sites/SiteName/Shared Documents/Invoices" />
+                        <label for="spDefaultFolder"><i class="fas fa-folder"></i> Default folder (auto-processing target)</label>
+                        <input type="hidden" id="spDefaultFolder" value="" />
+                        <div style="display:flex; gap:14px; flex-wrap:wrap; margin-top: 8px;">
+                            <label style="display:flex; align-items:center; gap:8px; margin:0; cursor:pointer;">
+                                <input type="radio" name="spDefaultFolderPreset" value="Non-Production\\Inbox" onchange="onSharePointDefaultFolderPresetChanged()" />
+                                <span>Non-Production\Inbox</span>
+                            </label>
+                            <label style="display:flex; align-items:center; gap:8px; margin:0; cursor:pointer;">
+                                <input type="radio" name="spDefaultFolderPreset" value="Production\\Inbox" onchange="onSharePointDefaultFolderPresetChanged()" />
+                                <span>Production\Inbox</span>
+                            </label>
+                        </div>
+                        <div id="spFolderLockHint" style="font-size: 12px; opacity: 0.8; margin-top: 6px;">
+                            When auto-processing is ON, this folder is locked.
+                        </div>
                     </div>
                     <div class="form-group">
                         <label for="spPollInterval"><i class="fas fa-clock"></i> Poll interval (seconds)</label>
@@ -1012,23 +1025,19 @@
                     </div>
 
                     <div class="form-group">
-                        <label><i class="fas fa-toggle-on"></i> Activate</label>
+                        <label><i class="fas fa-toggle-on"></i> Auto-processing</label>
                         <div style="display:flex; gap:14px; flex-wrap:wrap; padding: 6px 2px;">
                             <label style="display:flex; align-items:center; gap:8px; margin:0; cursor:pointer;">
-                                <input type="radio" name="spActivate" id="spActivateNone" value="NONE" checked onchange="onSharePointActivateChanged()" />
-                                <span>None</span>
+                                <input type="radio" name="spActivate" id="spActivateOn" value="true" onchange="onSharePointActivateChanged()" />
+                                <span>ON</span>
                             </label>
                             <label style="display:flex; align-items:center; gap:8px; margin:0; cursor:pointer;">
-                                <input type="radio" name="spActivate" id="spActivateNonProd" value="NON_PROD" onchange="onSharePointActivateChanged()" />
-                                <span>Non-Production</span>
-                            </label>
-                            <label style="display:flex; align-items:center; gap:8px; margin:0; cursor:pointer;">
-                                <input type="radio" name="spActivate" id="spActivateProd" value="PROD" onchange="onSharePointActivateChanged()" />
-                                <span>Production</span>
+                                <input type="radio" name="spActivate" id="spActivateOff" value="false" checked onchange="onSharePointActivateChanged()" />
+                                <span>OFF</span>
                             </label>
                         </div>
                         <div id="spActivateStatus" style="font-size: 12px; opacity: 0.8; margin-top: 6px;">
-                            Disabled by default. When enabled, the server will scan the configured Inbox folder and process PDFs automatically.
+                            Disabled by default. When enabled, the server will scan the Default folder and process PDFs automatically.
                         </div>
                     </div>
                     <div style="display:flex; gap:10px;">
@@ -1812,11 +1821,13 @@
                 document.getElementById('spClientId').value = data.client_id || '';
                 document.getElementById('spTenant').value = data.tenant || '';
                 document.getElementById('spLink').value = data.link || '';
-                document.getElementById('spDefaultFolder').value = data.folder || '';
+                const savedFolder = String(data.folder || '').trim();
+                document.getElementById('spDefaultFolder').value = savedFolder;
+                syncSharePointDefaultFolderPreset(savedFolder);
                 document.getElementById('spPollInterval').value = (data.poll_interval !== null && data.poll_interval !== undefined) ? data.poll_interval : '';
 
                 // Activation mode
-                setSharePointActivateUi(data.sp_activate || 'NONE');
+                setSharePointActivateUi(Boolean(data.sp_activate));
 
                 // Secret is intentionally not returned. Keep input blank.
                 document.getElementById('spSecret').value = '';
@@ -1866,28 +1877,85 @@
             }
         }
 
-        function getSharePointActivateUi() {
-            const el = document.querySelector('input[name="spActivate"]:checked');
-            return el ? (el.value || 'NONE') : 'NONE';
+        async function saveSharePointSettingsSilently() {
+            const payload = {
+                client_id: document.getElementById('spClientId').value || '',
+                tenant: document.getElementById('spTenant').value || '',
+                secret: document.getElementById('spSecret').value || '',
+                link: document.getElementById('spLink').value || '',
+                folder: document.getElementById('spDefaultFolder').value || '',
+                poll_interval: document.getElementById('spPollInterval').value || ''
+            };
+
+            const response = await fetch('/api/settings/sharepoint', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.detail || 'Unknown error');
+            }
+            // Secret is write-only; clear it after save.
+            document.getElementById('spSecret').value = '';
+            setSecretStatusText(Boolean(data.secret_set));
         }
 
-        function setSharePointActivateUi(mode) {
-            const m = String(mode || 'NONE').toUpperCase();
-            const target = (m === 'NON_PROD') ? 'spActivateNonProd' : (m === 'PROD' ? 'spActivateProd' : 'spActivateNone');
+        function getSharePointActivateUi() {
+            const el = document.querySelector('input[name="spActivate"]:checked');
+            if (!el) return false;
+            return String(el.value || '').toLowerCase() === 'true';
+        }
+
+        function setSharePointActivateUi(enabled) {
+            const isOn = Boolean(enabled);
+            const target = isOn ? 'spActivateOn' : 'spActivateOff';
             const el = document.getElementById(target);
             if (el) el.checked = true;
 
             const box = document.getElementById('spActivateStatus');
             if (box) {
-                if (m === 'NON_PROD') box.textContent = 'Activated: NON_PROD (auto-process Non-Production inbox)';
-                else if (m === 'PROD') box.textContent = 'Activated: PROD (auto-process Production inbox)';
-                else box.textContent = 'Deactivated: NONE (no automatic processing)';
+                if (isOn) box.textContent = 'Activated: ON (auto-processes the Default folder)';
+                else box.textContent = 'Deactivated: OFF (no automatic processing)';
             }
+
+            updateSharePointFolderLock(isOn);
+            updateSharePointSettingsLock(isOn);
+        }
+
+        function updateSharePointFolderLock(enabled) {
+            const input = document.getElementById('spDefaultFolder');
+            const hint = document.getElementById('spFolderLockHint');
+            if (input) input.disabled = Boolean(enabled);
+            if (hint) hint.style.opacity = enabled ? '1' : '0.6';
+        }
+
+        function updateSharePointSettingsLock(enabled) {
+            const ids = [
+                'spClientId',
+                'spTenant',
+                'spSecret',
+                'spLink',
+                'spDefaultFolder',
+                'spPollInterval'
+            ];
+            ids.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = Boolean(enabled);
+            });
+
+            const presets = document.querySelectorAll('input[name="spDefaultFolderPreset"]');
+            presets.forEach(el => {
+                el.disabled = Boolean(enabled);
+            });
         }
 
         async function onSharePointActivateChanged() {
             const mode = getSharePointActivateUi();
             try {
+                if (mode === true) {
+                    await saveSharePointSettingsSilently();
+                }
                 const response = await fetch('/api/settings/sharepoint/activate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1898,10 +1966,35 @@
                     showResult('error', '<i class="fas fa-times-circle"></i> Failed to update activation: ' + (data.detail || 'Unknown error'));
                     return;
                 }
-                setSharePointActivateUi(data.mode || mode);
-                showResult('success', '<i class="fas fa-check-circle"></i> SharePoint activation updated: ' + escapeHtml(String(data.mode || mode)));
+                setSharePointActivateUi(Boolean(data.mode));
+                showResult('success', '<i class="fas fa-check-circle"></i> SharePoint activation updated: ' + (data.mode ? 'ON' : 'OFF'));
             } catch (e) {
                 showResult('error', '<i class="fas fa-times-circle"></i> Failed to update activation: ' + e.message);
+            }
+        }
+
+        function onSharePointDefaultFolderPresetChanged() {
+            const el = document.querySelector('input[name="spDefaultFolderPreset"]:checked');
+            if (!el) return;
+            const value = String(el.value || '').trim();
+            const input = document.getElementById('spDefaultFolder');
+            if (input) input.value = value;
+        }
+
+        function syncSharePointDefaultFolderPreset(value) {
+            const v = String(value || '').trim();
+            const radios = document.querySelectorAll('input[name="spDefaultFolderPreset"]');
+            let matched = false;
+            radios.forEach(r => {
+                if (String(r.value || '') === v) {
+                    r.checked = true;
+                    matched = true;
+                }
+            });
+            if (!matched && radios.length) {
+                radios[0].checked = true;
+                const input = document.getElementById('spDefaultFolder');
+                if (input) input.value = String(radios[0].value || '');
             }
         }
 

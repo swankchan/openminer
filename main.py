@@ -54,19 +54,33 @@ from dotenv import load_dotenv, dotenv_values
 from urllib.parse import urlparse
 
 
-def _parse_sp_activate(raw: str) -> str:
-    s = _strip_wrapping_quotes(raw or "").strip()
+def _parse_sp_activate(raw: Any) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    s = _strip_wrapping_quotes(str(raw or "")).strip()
     if not s:
-        return "NONE"
+        return False
     low = s.lower()
+    if low in ("1", "true", "yes", "on", "enabled", "activate", "activated"):
+        return True
     if low in ("0", "false", "no", "off", "none", "disabled", "deactivated"):
-        return "NONE"
-    if low in ("non_prod", "non-prod", "nonproduction", "non-production"):
-        return "NON_PROD"
-    if low in ("prod", "production"):
-        return "PROD"
-    up = s.upper()
-    return up if up in ("NONE", "NON_PROD", "PROD") else "NONE"
+        return False
+    # Backward-compatibility for legacy NON_PROD/PROD values
+    if low in ("non_prod", "non-prod", "nonproduction", "non-production", "prod", "production"):
+        return True
+    return False
+
+
+def _pick_sp_processed_folder(inbox_env: str) -> str:
+    """Pick a processed folder based on inbox path hints and available env vars."""
+    non_prod = os.getenv("SP_NON_PROD_PROCESSED_DIR") or ""
+    prod = os.getenv("SP_PROD_PROCESSED_DIR") or ""
+    low = (inbox_env or "").lower()
+    if "non-production" in low or "non prod" in low or "nonprod" in low:
+        return non_prod or prod
+    if "production" in low or "prod" in low:
+        return prod or non_prod
+    return prod or non_prod
 
 
 def _normalize_sp_folder_env_path(raw: str) -> str:
@@ -163,10 +177,10 @@ async def _sharepoint_auto_ingest_loop(app: FastAPI, stop_event: asyncio.Event, 
             pass
 
         runtime_mode = getattr(getattr(app, "state", None), "sp_activate_runtime", None)
-        if isinstance(runtime_mode, str) and runtime_mode:
-            mode = _parse_sp_activate(runtime_mode)
+        if runtime_mode is not None:
+            enabled = _parse_sp_activate(runtime_mode)
         else:
-            mode = _parse_sp_activate(os.getenv("SP_ACTIVATE") or "")
+            enabled = _parse_sp_activate(os.getenv("SP_ACTIVATE") or "")
 
         # Poll interval (seconds)
         poll_s = 60
@@ -177,7 +191,7 @@ async def _sharepoint_auto_ingest_loop(app: FastAPI, stop_event: asyncio.Event, 
             except Exception:
                 poll_s = 60
 
-        if mode == "NONE":
+        if not enabled:
             # Sleep (or wake early if user toggles)
             try:
                 await asyncio.wait_for(wake_event.wait(), timeout=float(poll_s))
@@ -186,18 +200,26 @@ async def _sharepoint_auto_ingest_loop(app: FastAPI, stop_event: asyncio.Event, 
             wake_event.clear()
             continue
 
-        if mode == "NON_PROD":
-            inbox_env = os.getenv("SP_NON_PROD_INBOX_DIR") or ""
-            processed_env = os.getenv("SP_NON_PROD_PROCESSED_DIR") or ""
-        else:
-            inbox_env = os.getenv("SP_PROD_INBOX_DIR") or ""
-            processed_env = os.getenv("SP_PROD_PROCESSED_DIR") or ""
+        inbox_env = os.getenv("SHAREPOINT_FOLDER") or ""
+        processed_env = _pick_sp_processed_folder(inbox_env)
+
+        if not inbox_env.strip():
+            if DEBUG:
+                print("[SP_AUTO] SHAREPOINT_FOLDER is empty; skipping auto-processing")
+            try:
+                await asyncio.wait_for(wake_event.wait(), timeout=float(poll_s))
+            except asyncio.TimeoutError:
+                pass
+            wake_event.clear()
+            continue
 
         inbox_folder = _normalize_sp_folder_env_path(inbox_env)
         processed_folder = _normalize_sp_folder_env_path(processed_env)
 
         if DEBUG:
-            print(f"[SP_AUTO] mode={mode} inbox={inbox_folder} processed={processed_folder} poll={poll_s}s")
+            print(
+                f"[SP_AUTO] enabled={enabled} inbox={inbox_folder} processed={processed_folder} poll={poll_s}s"
+            )
 
         try:
             pdf_items = await asyncio.to_thread(
@@ -816,9 +838,7 @@ async def get_sharepoint_settings():
     folder = _strip_wrapping_quotes(values.get("SHAREPOINT_FOLDER") or "")
 
     sp_activate = _parse_sp_activate(_strip_wrapping_quotes(values.get("SP_ACTIVATE") or ""))
-    sp_non_prod_inbox = _strip_wrapping_quotes(values.get("SP_NON_PROD_INBOX_DIR") or "")
     sp_non_prod_processed = _strip_wrapping_quotes(values.get("SP_NON_PROD_PROCESSED_DIR") or "")
-    sp_prod_inbox = _strip_wrapping_quotes(values.get("SP_PROD_INBOX_DIR") or "")
     sp_prod_processed = _strip_wrapping_quotes(values.get("SP_PROD_PROCESSED_DIR") or "")
 
     poll_raw = _strip_wrapping_quotes(values.get("SHAREPOINT_POLL_INTERVAL") or "")
@@ -841,9 +861,7 @@ async def get_sharepoint_settings():
         "poll_interval": poll_interval,
         "secret_set": secret_set,
         "sp_activate": sp_activate,
-        "sp_non_prod_inbox_dir": sp_non_prod_inbox,
         "sp_non_prod_processed_dir": sp_non_prod_processed,
-        "sp_prod_inbox_dir": sp_prod_inbox,
         "sp_prod_processed_dir": sp_prod_processed,
     }
 
@@ -851,27 +869,24 @@ async def get_sharepoint_settings():
 @app.get("/api/settings/sharepoint/activate")
 async def get_sharepoint_activate():
     runtime_mode = getattr(getattr(app, "state", None), "sp_activate_runtime", None)
-    if isinstance(runtime_mode, str) and runtime_mode:
+    if runtime_mode is not None:
         return {"mode": _parse_sp_activate(runtime_mode), "source": "runtime"}
 
     env_path = BASE_DIR / ".env"
     values = dict(dotenv_values(env_path)) if env_path.exists() else dict(os.environ)
-    mode = _parse_sp_activate(_strip_wrapping_quotes(values.get("SP_ACTIVATE") or ""))
-    return {"mode": mode, "source": "env"}
+    enabled = _parse_sp_activate(_strip_wrapping_quotes(values.get("SP_ACTIVATE") or ""))
+    return {"mode": enabled, "source": "env"}
 
 
 @app.post("/api/settings/sharepoint/activate")
 async def set_sharepoint_activate(payload: Dict[str, Any] = Body(...)):
     raw = payload.get("mode")
-    mode = _parse_sp_activate(str(raw) if raw is not None else "")
+    enabled = _parse_sp_activate(raw)
 
     # Runtime-only toggle: do NOT persist SP_ACTIVATE to .env.
     # This ensures SP_ACTIVATE stays e.g. NONE in .env even if the UI activates.
     try:
-        if mode == "NONE":
-            app.state.sp_activate_runtime = None
-        else:
-            app.state.sp_activate_runtime = mode
+        app.state.sp_activate_runtime = enabled
     except Exception:
         pass
 
@@ -881,13 +896,19 @@ async def set_sharepoint_activate(payload: Dict[str, Any] = Body(...)):
     except Exception:
         pass
 
-    return {"status": "ok", "mode": mode, "source": "runtime"}
+    return {"status": "ok", "mode": enabled, "source": "runtime"}
 
 
 @app.post("/api/settings/sharepoint")
 async def set_sharepoint_settings(payload: Dict[str, Any] = Body(...)):
     """Update SharePoint settings in .env. Secret is write-only."""
     env_path = BASE_DIR / ".env"
+
+    runtime_mode = getattr(getattr(app, "state", None), "sp_activate_runtime", None)
+    runtime_enabled = _parse_sp_activate(runtime_mode) if runtime_mode is not None else None
+    env_values = dict(dotenv_values(env_path)) if env_path.exists() else {}
+    env_enabled = _parse_sp_activate(_strip_wrapping_quotes(env_values.get("SP_ACTIVATE") or ""))
+    is_active = runtime_enabled if runtime_enabled is not None else env_enabled
 
     client_id = _strip_wrapping_quotes(payload.get("client_id") or "")
     tenant = _strip_wrapping_quotes(payload.get("tenant") or "")
@@ -904,21 +925,23 @@ async def set_sharepoint_settings(payload: Dict[str, Any] = Body(...)):
         except Exception:
             raise HTTPException(status_code=400, detail="poll_interval must be an integer >= 1")
 
+    current_folder = _strip_wrapping_quotes(env_values.get("SHAREPOINT_FOLDER") or "")
+    if is_active and folder and folder != current_folder:
+        raise HTTPException(status_code=400, detail="SHAREPOINT_FOLDER is locked while auto-processing is ON")
+
+    folder_to_save = current_folder if is_active and folder == "" else folder
+
     updates: Dict[str, str] = {
         # User-provided 6 keys
         "SHAREPOINT_CLIENT_ID": client_id,
         "SHAREPOINT_TENANT": tenant,
         "SHAREPOINT_LINK": link,
-        "SHAREPOINT_FOLDER": folder,
+        "SHAREPOINT_FOLDER": folder_to_save,
     }
 
     # Note: SP_ACTIVATE is intentionally NOT persisted here; activation is runtime-only.
-    if "sp_non_prod_inbox_dir" in payload:
-        updates["SP_NON_PROD_INBOX_DIR"] = _strip_wrapping_quotes(str(payload.get("sp_non_prod_inbox_dir") or ""))
     if "sp_non_prod_processed_dir" in payload:
         updates["SP_NON_PROD_PROCESSED_DIR"] = _strip_wrapping_quotes(str(payload.get("sp_non_prod_processed_dir") or ""))
-    if "sp_prod_inbox_dir" in payload:
-        updates["SP_PROD_INBOX_DIR"] = _strip_wrapping_quotes(str(payload.get("sp_prod_inbox_dir") or ""))
     if "sp_prod_processed_dir" in payload:
         updates["SP_PROD_PROCESSED_DIR"] = _strip_wrapping_quotes(str(payload.get("sp_prod_processed_dir") or ""))
     if poll_interval != "":

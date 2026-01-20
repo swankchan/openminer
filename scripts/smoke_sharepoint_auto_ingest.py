@@ -4,8 +4,8 @@ This is a lightweight validation script that:
 - patches `main.sharepoint_service` with an in-memory fake
 - provides a fake processing queue so no OCR/MinerU/AI work runs
 - runs the auto-ingest loop briefly for BOTH modes:
-  - NONE: should not list or enqueue anything
-  - NON_PROD: should list one PDF, enqueue once, and attempt a move
+    - OFF: should not list or enqueue anything
+    - ON: should list one PDF, enqueue once, and attempt a move
 
 Run:
   conda run -n mineru2.5 python scripts/smoke_sharepoint_auto_ingest.py
@@ -79,7 +79,7 @@ class FakeSharePointService:
         return {"ok": True}
 
 
-async def _run_once(mode: str) -> Dict[str, Any]:
+async def _run_once(enabled: bool) -> Dict[str, Any]:
     # Ensure DEBUG is enabled in the imported module (config reads env at import time).
     os.environ["DEBUG"] = "true"
 
@@ -99,9 +99,9 @@ async def _run_once(mode: str) -> Dict[str, Any]:
     (tmp_env_root / ".env").write_text(
         "\n".join(
             [
-                f"SP_ACTIVATE={mode}",
+                f"SP_ACTIVATE={'True' if enabled else 'False'}",
                 "SHAREPOINT_POLL_INTERVAL=5",
-                r"SP_NON_PROD_INBOX_DIR=Non-Production\\Inbox",
+                r"SHAREPOINT_FOLDER=Non-Production\\Inbox",
                 r"SP_NON_PROD_PROCESSED_DIR=Non-Production\\Processed",
             ]
         )
@@ -131,7 +131,7 @@ async def _run_once(mode: str) -> Dict[str, Any]:
     await asyncio.wait_for(task, timeout=3)
 
     return {
-        "mode": mode,
+        "enabled": enabled,
         "list_calls": fake_sp.list_calls,
         "enqueued": list(fake_pq.enqueued),
         "ensure_calls": list(fake_sp.ensure_calls),
@@ -141,11 +141,11 @@ async def _run_once(mode: str) -> Dict[str, Any]:
 
 
 def main_entry() -> None:
-    results = asyncio.run(_run_once("NONE"))
-    print("[SMOKE] mode=NONE", results)
+    results = asyncio.run(_run_once(False))
+    print("[SMOKE] mode=OFF", results)
 
-    results = asyncio.run(_run_once("NON_PROD"))
-    print("[SMOKE] mode=NON_PROD", results)
+    results = asyncio.run(_run_once(True))
+    print("[SMOKE] mode=ON", results)
 
 
 if __name__ == "__main__":
