@@ -1145,11 +1145,11 @@
         <!-- Windows folder tab -->
         <div id="folder-tab" class="tab-content">
             <div class="form-group">
-                <label for="folderPath"><i class="fas fa-folder"></i> Windows folder path</label>
-                <input type="text" id="folderPath" placeholder="e.g.: C:\Documents\PDFs" />
+                <label for="folderPath"><i class="fas fa-folder"></i> Windows folder path (output directory)</label>
+                <input type="text" id="folderPath" placeholder="e.g.: \\server\share\outputs" />
             </div>
-            <button class="btn" onclick="processFolder()">
-                <span><i class="fas fa-tasks"></i> Process all PDFs in the folder</span>
+            <button class="btn" onclick="saveNetworkShareDir()">
+                <span><i class="fas fa-save"></i> Save Windows folder (output)</span>
             </button>
         </div>
 
@@ -1374,7 +1374,7 @@
             }
         }
 
-        function switchTab(tabName) {
+        async function switchTab(tabName) {
             document.querySelectorAll('.tab-content').forEach(content => {
                 content.classList.remove('active');
             });
@@ -1388,6 +1388,17 @@
             if (tabName === 'sharepoint') {
                 // Best-effort: load settings when opening the SharePoint tab.
                 loadSharePointSettings().catch(() => {});
+            }
+            if (tabName === 'folder') {
+                // Best-effort: load saved Windows network folder when opening the Folder tab.
+                try {
+                    const resp = await fetch('/api/settings/network_share', { method: 'GET' });
+                    const d = await resp.json();
+                    if (resp.ok && d && d.path) {
+                        const el = document.getElementById('folderPath');
+                        if (el && !el.value) el.value = d.path;
+                    }
+                } catch (_) {}
             }
         }
 
@@ -1842,6 +1853,15 @@
                 // Preload folder browser with default folder.
                 const startFolder = (data.folder || '').trim() || (procFolder ? (procFolder.value || '').trim() : '') || '/';
                 await browseSharePoint(startFolder);
+                // Load saved network share path into Windows folder input
+                try {
+                    const resp = await fetch('/api/settings/network_share', { method: 'GET' });
+                    const d = await resp.json();
+                    if (resp.ok && d && d.path) {
+                        const el = document.getElementById('folderPath');
+                        if (el && !el.value) el.value = d.path;
+                    }
+                } catch (_) {}
             } catch (e) {
                 showResult('error', '<i class="fas fa-times-circle"></i> Failed to load SharePoint settings: ' + e.message);
             }
@@ -2567,6 +2587,17 @@
                 return;
             }
 
+            // Save NETWORK_SHARE_DIR so Windows network path is persisted
+            try {
+                await fetch('/api/settings/network_share', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: folderPath })
+                });
+            } catch (_) {
+                // Non-fatal: continue to process even if save fails
+            }
+
             const formData = new FormData();
             formData.append('folder_path', folderPath);
 
@@ -2602,6 +2633,36 @@
                 }
             } catch (error) {
                 showResult('error', '<i class="fas fa-times-circle"></i> Processing failed: ' + error.message);
+            } finally {
+                showProgress(false);
+            }
+        }
+
+        async function saveNetworkShareDir() {
+            const folderPath = document.getElementById('folderPath').value;
+
+            if (!folderPath) {
+                showResult('error', '<i class="fas fa-exclamation-circle"></i> Please enter a folder path.');
+                return;
+            }
+
+            showProgress(true);
+            try {
+                const resp = await fetch('/api/settings/network_share', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: folderPath })
+                });
+
+                if (resp.ok) {
+                    showResult('success', '<i class="fas fa-check-circle"></i> Saved Windows folder (output).');
+                } else {
+                    let detail = resp.statusText;
+                    try { const d = await resp.json(); if (d && d.detail) detail = d.detail; } catch(_){}
+                    showResult('error', '<i class="fas fa-times-circle"></i> Save failed: ' + detail);
+                }
+            } catch (e) {
+                showResult('error', '<i class="fas fa-times-circle"></i> Save failed: ' + e.message);
             } finally {
                 showProgress(false);
             }

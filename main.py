@@ -48,6 +48,7 @@ from config import (
     OCR_FORCE_REDO,
     OCR_IMAGE_DPI,
     OCR_TESSDATA_PREFIX,
+    NETWORK_SHARE_DIR,
 )
 import re
 from dotenv import load_dotenv, dotenv_values
@@ -837,7 +838,12 @@ async def get_sharepoint_settings():
     link = _strip_wrapping_quotes(values.get("SHAREPOINT_LINK") or values.get("SHAREPOINT_SITE_URL") or "")
     folder = _strip_wrapping_quotes(values.get("SHAREPOINT_FOLDER") or "")
 
-    sp_activate = _parse_sp_activate(_strip_wrapping_quotes(values.get("SP_ACTIVATE") or ""))
+    # Prefer runtime toggle if present so the UI reflects the actual running state.
+    runtime_mode = getattr(getattr(app, "state", None), "sp_activate_runtime", None)
+    if runtime_mode is not None:
+        sp_activate = _parse_sp_activate(runtime_mode)
+    else:
+        sp_activate = _parse_sp_activate(_strip_wrapping_quotes(values.get("SP_ACTIVATE") or ""))
     sp_non_prod_processed = _strip_wrapping_quotes(values.get("SP_NON_PROD_PROCESSED_DIR") or "")
     sp_prod_processed = _strip_wrapping_quotes(values.get("SP_PROD_PROCESSED_DIR") or "")
 
@@ -983,6 +989,25 @@ async def set_sharepoint_settings(payload: Dict[str, Any] = Body(...)):
         _strip_wrapping_quotes(current.get("SHAREPOINT_SECRET") or current.get("SHAREPOINT_CLIENT_SECRET") or "")
     )
     return {"status": "ok", "secret_set": secret_set}
+
+
+@app.get("/api/settings/network_share")
+async def get_network_share():
+    env_path = BASE_DIR / ".env"
+    values = dict(dotenv_values(env_path)) if env_path.exists() else dict(os.environ)
+    path = _strip_wrapping_quotes(values.get("NETWORK_SHARE_DIR") or "")
+    return {"path": path}
+
+
+@app.post("/api/settings/network_share")
+async def set_network_share(payload: Dict[str, Any] = Body(...)):
+    env_path = BASE_DIR / ".env"
+    p = _strip_wrapping_quotes(str(payload.get("path") or ""))
+    updates: Dict[str, str] = {"NETWORK_SHARE_DIR": p}
+    _write_dotenv_updates(env_path, updates)
+    # Reload so runtime picks it up immediately
+    load_dotenv(dotenv_path=str(env_path), override=True)
+    return {"status": "ok", "path": p}
 
 
 @app.get("/api/settings/prompts")
@@ -1881,6 +1906,35 @@ async def process_pdf_file(
                             output_path=Path(template_csv_out),
                         )
                         result["template_csv_path"] = str(template_csv_path)
+                        # If configured, copy an additional copy of the CSV to the network share path.
+                        try:
+                            if NETWORK_SHARE_DIR:
+                                import shutil
+
+                                try:
+                                    dest_dir = Path(NETWORK_SHARE_DIR)
+                                except Exception:
+                                    dest_dir = None
+
+                                if dest_dir:
+                                    try:
+                                        dest_dir.mkdir(parents=True, exist_ok=True)
+                                    except Exception:
+                                        # ignore creation errors; copy may still work if mounted
+                                        pass
+
+                                    try:
+                                        dest = dest_dir / Path(template_csv_path).name
+                                        shutil.copy2(str(template_csv_path), str(dest))
+                                        result["template_csv_network_path"] = str(dest)
+                                        if DEBUG:
+                                            print(f"[NETWORK_SHARE] Copied template CSV to {dest}")
+                                    except Exception as e:
+                                        if DEBUG:
+                                            print(f"[NETWORK_SHARE] Failed to copy template CSV to network share: {e}")
+                        except Exception:
+                            # Non-fatal: network copy failure should not break processing
+                            pass
                     else:
                         if DEBUG:
                             print("[TEMPLATE_CSV] ⚠ MinerU sidecar not found; skipping template CSV")

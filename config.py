@@ -196,6 +196,17 @@ for dir_path in [UPLOAD_DIR, JSON_OUTPUT_DIR, CSV_OUTPUT_DIR, MINERU_OUTPUT_DIR,
 if SIDECAR_OUTPUT_DIR is not None:
     Path(SIDECAR_OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
 
+# Optional network share path for copies of outputs (e.g., CSV duplication)
+# If unset or empty, no network copy is attempted.
+NETWORK_SHARE_DIR = _env_optional_path("NETWORK_SHARE_DIR", BASE_DIR)
+if NETWORK_SHARE_DIR is not None:
+    try:
+        Path(NETWORK_SHARE_DIR).mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # Best-effort: if creating the network share path fails (permissions / not mounted),
+        # we'll handle that at runtime when attempting to copy files.
+        pass
+
 # ============================================================================
 # Configuration (edit defaults here, or override via .env)
 # ============================================================================
