@@ -6,6 +6,7 @@ import base64
 import os
 import time
 from pathlib import Path
+import json
 from typing import Optional, Dict, Any, List, Tuple
 from urllib.parse import urlparse, parse_qs, unquote, quote
 
@@ -1062,6 +1063,24 @@ class SharePointService:
             raise Exception("Missing source path")
         if not dst:
             raise Exception("Missing destination folder")
+
+        # Write src/dst hint into sidecar folder as src_dst.txt (best effort)
+        try:
+            from config import SIDECAR_OUTPUT_DIR  # type: ignore
+            sidecar_dir = Path(SIDECAR_OUTPUT_DIR) if SIDECAR_OUTPUT_DIR else None
+            if sidecar_dir:
+                sidecar_dir.mkdir(parents=True, exist_ok=True)
+                tmp_path = sidecar_dir / "src_dst.txt"
+                # Append filename to processed_url (use dest_name if provided, else source filename)
+                final_name = (Path(str(dest_name)).name if (dest_name and str(dest_name).strip()) else Path(str(src)).name)
+                processed_file_url = f"{dst.rstrip('/')}/{final_name}"
+                tmp_path.write_text(
+                    json.dumps({"source_path": src, "processed_url": processed_file_url}, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+        except Exception:
+            # non-fatal; continue with move operation
+            pass
 
         src_item = self._resolve_drive_item_from_server_relative(src)
         src_drive_id = str(src_item.get("_drive_id") or "")

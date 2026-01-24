@@ -16,6 +16,7 @@ outputs/
 mineru_outputs/
 tests/
 *.csv
+!templates/template.csv
 *.json
 .DS_Store
 *.pdf

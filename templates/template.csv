@@ -1,0 +1,14 @@
+Confidence,[confidence],,,,,,,
+OU,[OU],,,,,,,
+PONumber,[PONumber],,,,,,,
+InvoiceNumber,[InvoiceNumber],,,,,,,
+InvoiceDate,[InvoiceDate],,,,,,,
+BillTo,[BillTo],,,,,,,
+BillFrom,[BillFrom],,,,,,,
+TotalAmount,[TotalAmount],,,,,,,
+Currency,[Currency],,,,,,,
+SourceURL,[SourceURL],,,,,,,
+ProcessedURL,[ProcessedURL],,,,,,,
+ItemTable,,,,,,,,
+PONumber,PartNumber,ModelName ,Description ,Quantity,Unit ,Discount,UnitPrice ,Subtotal 
+[PONumber],[PartNumber],[ModelName],[Description],[Quantity],[Unit],[Discount],[UnitPrice],[Subtotal]

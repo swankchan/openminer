@@ -125,6 +125,41 @@ def _write_csv_rows(path: Path, rows: Iterable[List[str]]) -> None:
             writer.writerow(row)
 
 
+def _read_src_dst_hint(sidecar_path: Path) -> Optional[Dict[str, str]]:
+    """Read src/dst hint from src_dst.txt near the sidecar or common locations.
+
+    Returns a dict with keys: source_path, processed_url; or None if not found.
+    """
+    candidates: List[Path] = []
+    try:
+        # 1) Same folder as sidecar
+        candidates.append(sidecar_path.parent / "src_dst.txt")
+        # 2) Configured sidecar output dir
+        from config import SIDECAR_OUTPUT_DIR  # type: ignore
+        if SIDECAR_OUTPUT_DIR:
+            candidates.append(Path(SIDECAR_OUTPUT_DIR) / "src_dst.txt")
+    except Exception:
+        pass
+    try:
+        # 3) Common outputs folder under project
+        candidates.append(BASE_DIR / "outputs" / "src_dst.txt")
+    except Exception:
+        pass
+
+    for cand in candidates:
+        try:
+            if cand.exists():
+                obj = json.loads(cand.read_text(encoding="utf-8"))
+                if isinstance(obj, dict):
+                    return {
+                        "source_path": str(obj.get("source_path") or ""),
+                        "processed_url": str(obj.get("processed_url") or ""),
+                    }
+        except Exception:
+            continue
+    return None
+
+
 def generate_template_csv_file(
     *,
     data_json_path: Path,
@@ -155,16 +190,51 @@ def generate_template_csv_file(
     if confidence_overall is None:
         confidence_overall = _get_by_path(sidecar, "confidence")
 
-    source_pdf_folder = _extract_last_folder_name_from_windows_path(
-        _to_str(_get_by_path(sidecar, "source_pdf"))
-    )
+    # Source/destination from src_dst.txt exclusively
+    srcdst = _read_src_dst_hint(sidecar_path)
 
     header_context: Dict[str, Any] = {}
     if isinstance(data, dict):
         header_context.update(data)
 
     header_context["confidence"] = confidence_overall
-    header_context["source_pdf"] = source_pdf_folder
+    header_context["SourceURL"] = (srcdst or {}).get("source_path", "")
+    header_context["ProcessedURL"] = (srcdst or {}).get("processed_url", "")
+    # Derive [OU] from grandparent folder of source_path (third-from-end path component).
+    try:
+        src_path_val = (srcdst or {}).get("source_path", "") or ""
+        ou_val = ""
+        if src_path_val:
+            parts = [p for p in src_path_val.split("/") if p]
+            if len(parts) >= 3:
+                grandparent = parts[-3]
+                # If grandparent contains spaces, take first token
+                ou_val = str(grandparent).split()[0] if isinstance(grandparent, str) else ""
+        header_context["OU"] = ou_val
+    except Exception:
+        header_context["OU"] = ""
+    # Expose processed SharePoint info for template placeholders (e.g., [ProcessedURL])
+    try:
+        processed_obj = None
+        if isinstance(sidecar, dict):
+            processed_obj = sidecar.get("processed")
+        # Prefer processed.server_relative_path; fallback to sidecar['ProcessedURL']
+        processed_url = ""
+        processed_folder = ""
+        processed_filename = ""
+        if processed_obj and isinstance(processed_obj, dict):
+            processed_url = processed_obj.get("server_relative_path") or ""
+            processed_folder = processed_obj.get("folder") or ""
+            processed_filename = processed_obj.get("filename") or ""
+        if not processed_url and isinstance(sidecar, dict):
+            processed_url = sidecar.get("ProcessedURL") or ""
+        header_context["ProcessedURL"] = processed_url
+        header_context["ProcessedFolder"] = processed_folder
+        header_context["ProcessedFilename"] = processed_filename
+    except Exception:
+        header_context["ProcessedURL"] = ""
+        header_context["ProcessedFolder"] = ""
+        header_context["ProcessedFilename"] = ""
 
     items: List[Dict[str, Any]] = []
     if isinstance(data, dict) and isinstance(data.get("ItemTable"), list):
@@ -226,16 +296,28 @@ def main(argv: Optional[List[str]] = None) -> int:
     if confidence_overall is None:
         confidence_overall = _get_by_path(sidecar, "confidence")
 
-    source_pdf_folder = _extract_last_folder_name_from_windows_path(
-        _to_str(_get_by_path(sidecar, "source_pdf"))
-    )
+    # Source/destination from src_dst.txt exclusively
+    srcdst = _read_src_dst_hint(sidecar_path)
 
     header_context: Dict[str, Any] = {}
     if isinstance(data, dict):
         header_context.update(data)
 
     header_context["confidence"] = confidence_overall
-    header_context["source_pdf"] = source_pdf_folder
+    header_context["SourceURL"] = (srcdst or {}).get("source_path", "")
+    header_context["ProcessedURL"] = (srcdst or {}).get("processed_url", "")
+    # Derive OU from grandparent folder of source_path (third-from-end path component).
+    try:
+        src_path_val = (srcdst or {}).get("source_path", "") or ""
+        ou_val = ""
+        if src_path_val:
+            parts = [p for p in src_path_val.split("/") if p]
+            if len(parts) >= 3:
+                grandparent = parts[-3]
+                ou_val = str(grandparent).split()[0] if isinstance(grandparent, str) else ""
+        header_context["OU"] = ou_val
+    except Exception:
+        header_context["OU"] = ""
 
     items: List[Dict[str, Any]] = []
     if isinstance(data, dict) and isinstance(data.get("ItemTable"), list):
