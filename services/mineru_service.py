@@ -1101,26 +1101,15 @@ class MinerUService:
         header_plugin_meta: Dict[str, Any],
     ) -> Dict[str, Any]:
         conf = self._compute_overall_confidence(mineru_json)
-        # Optional: read src/dst hint written by SharePoint move
-        source_path_hint = None
-        processed_url_hint = None
-        try:
-            from config import SIDECAR_OUTPUT_DIR  # type: ignore
-            if SIDECAR_OUTPUT_DIR:
-                tmp_path = Path(SIDECAR_OUTPUT_DIR) / "src_dst.txt"
-                if tmp_path.exists():
-                    obj = json.loads(tmp_path.read_text(encoding="utf-8"))
-                    if isinstance(obj, dict):
-                        source_path_hint = obj.get("source_path")
-                        processed_url_hint = obj.get("processed_url")
-        except Exception:
-            pass
+        # Note: Do NOT embed SourceURL/ProcessedURL into the sidecar.
+        # The canonical source/processed hints are stored in `src_dst.txt` and are
+        # consumed by CSV generation. Keep sidecar minimal and avoid duplicating
+        # source/destination metadata here.
         return {
             "schema": "openminer.mineru_sidecar.v1",
             "created_at": datetime.utcnow().isoformat() + "Z",
             "source_pdf": str(pdf_path),
-            "SourceURL": source_path_hint,
-            "ProcessedURL": processed_url_hint,
+            # Source/Processed hints intentionally omitted; read `src_dst.txt` instead.
             "selected_json_file": str(selected_json_file),
             "json_variant": str(json_variant or ""),
             "mineru": {
@@ -1134,12 +1123,6 @@ class MinerUService:
                 "header_zone": header_plugin_meta,
             },
             "confidence": conf,
-            # Placeholder for post-processing location (populated later by SharePoint logic)
-            "processed": {
-                "server_relative_path": None,
-                "folder": None,
-                "filename": None,
-            },
         }
 
     @staticmethod

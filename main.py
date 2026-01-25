@@ -258,65 +258,139 @@ async def _sharepoint_auto_ingest_loop(app: FastAPI, stop_event: asyncio.Event, 
                         file_id=file_id,
                         base_name=base_name,
                         mineru_json_variant=None,
+                        generate_template_csv_override=False,
                     ),
                 )
 
-                # Move to Processed folder (best-effort)
+                # After processing, move the input PDF to processed folder and write src_dst.txt
+                # Compute target processed folder path upfront; move input PDF best-effort
+                dest_folder = None
                 if processed_folder and processed_folder != "/":
+                    subdir = _sp_relative_subdir(inbox_folder, server_rel)
+                    d = processed_folder.rstrip("/")
+                    if subdir:
+                        d = f"{d}/{subdir}"
+                    dest_folder = d
                     try:
-                        subdir = _sp_relative_subdir(inbox_folder, server_rel)
-                        dest_folder = processed_folder.rstrip("/")
-                        if subdir:
-                            dest_folder = f"{dest_folder}/{subdir}"
-
-                        await asyncio.to_thread(
-                            sharepoint_service.ensure_folder_path,
-                            dest_folder,
-                        )
-
-                        await asyncio.to_thread(
-                            sharepoint_service.move_item,
-                            server_rel,
-                            dest_folder,
-                        )
-
-                        # Upload outputs (best-effort) into the same processed folder.
-                        if isinstance(result, dict):
-                            template_csv_path = result.get("template_csv_path")
-                            searchable_pdf_path = result.get("searchable_pdf_path")
-
-                            if template_csv_path:
-                                try:
-                                    csv_p = Path(str(template_csv_path))
-                                    if csv_p.exists():
-                                        csv_bytes = await asyncio.to_thread(csv_p.read_bytes)
-                                        await asyncio.to_thread(
-                                            sharepoint_service.upload_file,
-                                            dest_folder,
-                                            csv_p.name,
-                                            csv_bytes,
-                                        )
-                                except Exception as ue:
-                                    if DEBUG:
-                                        print(f"[SP_AUTO] upload template CSV failed ({server_rel}): {ue}")
-
-                            if searchable_pdf_path:
-                                try:
-                                    spdf_p = Path(str(searchable_pdf_path))
-                                    if spdf_p.exists():
-                                        spdf_bytes = await asyncio.to_thread(spdf_p.read_bytes)
-                                        await asyncio.to_thread(
-                                            sharepoint_service.upload_file,
-                                            dest_folder,
-                                            spdf_p.name,
-                                            spdf_bytes,
-                                        )
-                                except Exception as ue:
-                                    if DEBUG:
-                                        print(f"[SP_AUTO] upload searchable PDF failed ({server_rel}): {ue}")
+                        await asyncio.to_thread(sharepoint_service.ensure_folder_path, d)
+                        await asyncio.to_thread(sharepoint_service.move_item, server_rel, d)
                     except Exception as me:
                         if DEBUG:
                             print(f"[SP_AUTO] move failed ({server_rel}): {me}")
+
+                # Generate CSV now (after move attempt) so src_dst.txt likely exists
+                template_csv_path: Optional[Path] = None
+                if isinstance(result, dict):
+                    try:
+                        searchable_pdf_path = result.get("searchable_pdf_path")
+                        final_json_path = result.get("output_path")
+
+                        # Locate sidecar based on processed PDF run; fallback to minimal sidecar
+                        pdf_for_sidecar = Path(str(searchable_pdf_path)) if searchable_pdf_path else Path(str(local_pdf))
+                        _, sidecar_path = mineru_service.find_selected_json_and_sidecar(pdf_for_sidecar)
+
+                        # If sidecar not found, create a minimal one so CSV can still be generated
+                        if not sidecar_path:
+                            try:
+                                from config import SIDECAR_OUTPUT_DIR
+                                base_dir = Path(str(SIDECAR_OUTPUT_DIR)) if SIDECAR_OUTPUT_DIR else JSON_OUTPUT_DIR
+                            except Exception:
+                                base_dir = JSON_OUTPUT_DIR
+                            try:
+                                base_dir.mkdir(parents=True, exist_ok=True)
+                            except Exception:
+                                pass
+                            try:
+                                stub_name = f"{Path(str(final_json_path)).stem}_sidecar.json" if final_json_path else f"{base_name}_sidecar.json"
+                                stub_path = base_dir / stub_name
+                                stub_payload = {"confidence": {}}
+                                stub_path.write_text(json.dumps(stub_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                                sidecar_path = stub_path
+                            except Exception as se:
+                                if DEBUG:
+                                    print(f"[SP_AUTO] Failed to create stub sidecar: {se}")
+
+                        if final_json_path and sidecar_path:
+                            from services.jsoncsv_app import generate_template_csv_file
+                            template_csv_out = get_unique_csv_path(f"{base_name}_template", CSV_OUTPUT_DIR)
+                            template_csv_path = generate_template_csv_file(
+                                data_json_path=Path(final_json_path),
+                                sidecar_json_path=Path(sidecar_path),
+                                output_path=Path(template_csv_out),
+                            )
+                            # Expose CSV path in the result for UI and APIs
+                            result["template_csv_path"] = str(template_csv_path)
+                    except Exception as e:
+                        if DEBUG:
+                            print(f"[SP_AUTO] template CSV generation failed ({server_rel}): {e}")
+
+                # Upload outputs to processed folder if available
+                if dest_folder:
+                    try:
+                        # Upload template CSV (if generated)
+                        if template_csv_path:
+                            try:
+                                csv_p = Path(str(template_csv_path))
+                                if csv_p.exists():
+                                    csv_bytes = await asyncio.to_thread(csv_p.read_bytes)
+                                    await asyncio.to_thread(
+                                        sharepoint_service.upload_file,
+                                        dest_folder,
+                                        csv_p.name,
+                                        csv_bytes,
+                                    )
+                            except Exception as ue:
+                                if DEBUG:
+                                    print(f"[SP_AUTO] upload template CSV failed ({server_rel}): {ue}")
+
+                        # Regenerate CSV after upload to ensure it used the latest src_dst.txt
+                        # and re-upload the regenerated CSV so SharePoint has the final values.
+                        try:
+                            if template_csv_path and Path(str(template_csv_path)).exists():
+                                # Re-generate using same inputs (this will re-read src_dst.txt)
+                                try:
+                                    from services.jsoncsv_app import generate_template_csv_file
+
+                                    regenerated_path = generate_template_csv_file(
+                                        data_json_path=Path(final_json_path),
+                                        sidecar_json_path=Path(sidecar_path),
+                                        output_path=Path(template_csv_path),
+                                    )
+                                    # Upload regenerated CSV (overwrite)
+                                    try:
+                                        csv_bytes = await asyncio.to_thread(Path(regenerated_path).read_bytes)
+                                        await asyncio.to_thread(
+                                            sharepoint_service.upload_file,
+                                            dest_folder,
+                                            Path(regenerated_path).name,
+                                            csv_bytes,
+                                        )
+                                    except Exception as reup_e:
+                                        if DEBUG:
+                                            print(f"[SP_AUTO] re-upload regenerated CSV failed ({server_rel}): {reup_e}")
+                                except Exception as regen_e:
+                                    if DEBUG:
+                                        print(f"[SP_AUTO] regenerate-after-upload failed ({server_rel}): {regen_e}")
+                        except Exception:
+                            pass
+
+                        # Upload searchable PDF (if produced)
+                        if searchable_pdf_path:
+                            try:
+                                spdf_p = Path(str(searchable_pdf_path))
+                                if spdf_p.exists():
+                                    spdf_bytes = await asyncio.to_thread(spdf_p.read_bytes)
+                                    await asyncio.to_thread(
+                                        sharepoint_service.upload_file,
+                                        dest_folder,
+                                        spdf_p.name,
+                                        spdf_bytes,
+                                    )
+                            except Exception as ue:
+                                if DEBUG:
+                                    print(f"[SP_AUTO] upload searchable PDF failed ({server_rel}): {ue}")
+                    except Exception:
+                        pass
 
             except Exception as e:
                 if DEBUG:
@@ -1657,6 +1731,7 @@ async def process_pdf_file(
     system_prompt: Optional[str] = None,
     user_prompt: Optional[str] = None,
     mineru_json_variant: Optional[str] = None,
+    generate_template_csv_override: Optional[bool] = None,
 ) -> dict:
     """處理 PDF 檔案的完整流程
     
@@ -1671,7 +1746,9 @@ async def process_pdf_file(
         if base_name is None:
             base_name = sanitize_filename(file_path.name)
 
-        should_generate_template_csv = bool(GENERATE_TEMPLATE_CSV)
+        should_generate_template_csv = (
+            bool(GENERATE_TEMPLATE_CSV) if generate_template_csv_override is None else bool(generate_template_csv_override)
+        )
         
         # 步驟 1: 檢查 PDF 是否需要 OCR（除非強制 OCR）
         if task_id:

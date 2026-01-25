@@ -149,4 +149,10 @@ def main_entry() -> None:
 
 
 if __name__ == "__main__":
-    main_entry()
+    try:
+        main_entry()
+    except Exception:
+        import traceback
+
+        traceback.print_exc()
+        raise

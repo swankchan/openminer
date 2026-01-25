@@ -214,6 +214,8 @@ def generate_template_csv_file(
     except Exception:
         header_context["OU"] = ""
     # Expose processed SharePoint info for template placeholders (e.g., [ProcessedURL])
+    # Note: ProcessedURL was already set from src_dst.txt above (line 202).
+    # Only overwrite if sidecar provides a non-empty value.
     try:
         processed_obj = None
         if isinstance(sidecar, dict):
@@ -228,11 +230,15 @@ def generate_template_csv_file(
             processed_filename = processed_obj.get("filename") or ""
         if not processed_url and isinstance(sidecar, dict):
             processed_url = sidecar.get("ProcessedURL") or ""
-        header_context["ProcessedURL"] = processed_url
+        # Only overwrite ProcessedURL if sidecar provides a non-empty value;
+        # otherwise preserve the value from src_dst.txt (set in line 202).
+        if processed_url:
+            header_context["ProcessedURL"] = processed_url
         header_context["ProcessedFolder"] = processed_folder
         header_context["ProcessedFilename"] = processed_filename
     except Exception:
-        header_context["ProcessedURL"] = ""
+        # Don't clear ProcessedURL on error; preserve value from src_dst.txt
+        header_context.setdefault("ProcessedURL", "")
         header_context["ProcessedFolder"] = ""
         header_context["ProcessedFilename"] = ""
 

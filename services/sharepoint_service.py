@@ -1056,7 +1056,11 @@ class SharePointService:
         *,
         dest_name: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Move (and optionally rename) an item to another folder within the same drive."""
+        """Move (and optionally rename) an item to another folder within the same drive.
+        
+        If a file with the same name exists in the destination, Graph API will auto-rename
+        the file (e.g., "file.pdf" becomes "file 1.pdf") due to conflictBehavior=rename.
+        """
         src = self._normalize_server_relative_path(source_server_relative_path)
         dst = self._normalize_server_relative_path(dest_folder_path)
         if not src:
@@ -1064,24 +1068,7 @@ class SharePointService:
         if not dst:
             raise Exception("Missing destination folder")
 
-        # Write src/dst hint into sidecar folder as src_dst.txt (best effort)
-        try:
-            from config import SIDECAR_OUTPUT_DIR  # type: ignore
-            sidecar_dir = Path(SIDECAR_OUTPUT_DIR) if SIDECAR_OUTPUT_DIR else None
-            if sidecar_dir:
-                sidecar_dir.mkdir(parents=True, exist_ok=True)
-                tmp_path = sidecar_dir / "src_dst.txt"
-                # Append filename to processed_url (use dest_name if provided, else source filename)
-                final_name = (Path(str(dest_name)).name if (dest_name and str(dest_name).strip()) else Path(str(src)).name)
-                processed_file_url = f"{dst.rstrip('/')}/{final_name}"
-                tmp_path.write_text(
-                    json.dumps({"source_path": src, "processed_url": processed_file_url}, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-        except Exception:
-            # non-fatal; continue with move operation
-            pass
-
+        # Resolve source and destination items
         src_item = self._resolve_drive_item_from_server_relative(src)
         src_drive_id = str(src_item.get("_drive_id") or "")
         src_item_id = str(src_item.get("id") or "")
@@ -1098,16 +1085,77 @@ class SharePointService:
         if src_drive_id != dst_drive_id:
             raise Exception("Move across different drives is not supported")
 
+        # Build the move payload
         payload: Dict[str, Any] = {
             "parentReference": {"id": dst_item_id},
+            # Handle name conflicts: "rename" auto-appends a suffix if destination file exists
+            "@microsoft.graph.conflictBehavior": "rename",
         }
         if dest_name is not None and str(dest_name).strip():
             payload["name"] = Path(str(dest_name)).name
 
+        # Execute the move operation
         moved = self._graph_request(
             "PATCH",
             f"/drives/{src_drive_id}/items/{src_item_id}",
             json_body=payload,
         )
+
+        # After successful move, write src_dst.txt with the ACTUAL filename from the response
+        # (which may differ from the original if there was a name conflict)
+        try:
+            from config import SIDECAR_OUTPUT_DIR, BASE_DIR, CSV_OUTPUT_DIR  # type: ignore
+            
+            # Get the actual filename from the move response (may have been auto-renamed)
+            actual_name = str(moved.get("name") or "") if isinstance(moved, dict) else ""
+            if not actual_name:
+                actual_name = (Path(str(dest_name)).name if (dest_name and str(dest_name).strip()) else Path(str(src)).name)
+            
+            # Extract the SharePoint prefix from source path (e.g., /sites/APOCR/Shared Documents)
+            src_lower = src.lower()
+            dst_to_use = dst
+            for marker in ["/shared documents/", "/documents/"]:
+                idx = src_lower.find(marker)
+                if idx >= 0:
+                    prefix = src[: idx + len(marker) - 1]
+                    if not dst.lower().startswith(prefix.lower()):
+                        dst_to_use = f"{prefix.rstrip('/')}/{dst.lstrip('/')}"
+                    break
+            
+            processed_file_url = f"{dst_to_use.rstrip('/')}/{actual_name}"
+
+            # Candidate locations to persist the src_dst hint
+            candidates = []
+            if SIDECAR_OUTPUT_DIR:
+                candidates.append(Path(SIDECAR_OUTPUT_DIR))
+            try:
+                candidates.append(Path(BASE_DIR) / "outputs")
+            except Exception:
+                pass
+            try:
+                candidates.append(Path(CSV_OUTPUT_DIR))
+            except Exception:
+                pass
+
+            payload_txt = json.dumps({"source_path": src, "processed_url": processed_file_url}, ensure_ascii=False, indent=2)
+            for d in candidates:
+                try:
+                    if not d:
+                        continue
+                    d.mkdir(parents=True, exist_ok=True)
+                    tmp_path = d / "src_dst.txt"
+                    tmp_path.write_text(payload_txt, encoding="utf-8")
+                    try:
+                        from config import DEBUG  # type: ignore
+                        if DEBUG:
+                            print(f"sharepoint_service: wrote src_dst to {tmp_path} (actual name: {actual_name})")
+                    except Exception:
+                        pass
+                except Exception:
+                    continue
+        except Exception:
+            # non-fatal; continue
+            pass
+
         return {"ok": True, "source": src, "dest_folder": dst, "item": moved}
 

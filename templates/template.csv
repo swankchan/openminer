@@ -9,6 +9,10 @@ TotalAmount,[TotalAmount],,,,,,,
 Currency,[Currency],,,,,,,
 SourceURL,[SourceURL],,,,,,,
 ProcessedURL,[ProcessedURL],,,,,,,
+OverallDiscount,[OverallDiscount],,,,,,,
+Spare1,[Spare1],,,,,,,
+Spare2,[Spare2],,,,,,,
+Spare3,[Spare3],,,,,,,
 ItemTable,,,,,,,,
 PONumber,PartNumber,ModelName ,Description ,Quantity,Unit ,Discount,UnitPrice ,Subtotal 
 [PONumber],[PartNumber],[ModelName],[Description],[Quantity],[Unit],[Discount],[UnitPrice],[Subtotal]
