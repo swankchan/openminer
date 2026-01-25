@@ -166,10 +166,20 @@ def generate_template_csv_file(
     sidecar_json_path: Path,
     template_path: Optional[Path] = None,
     output_path: Optional[Path] = None,
+    source_path: Optional[str] = None,
+    processed_url: Optional[str] = None,
 ) -> Path:
     """Generate a CSV file from the fixed template (templates/template.csv).
 
     This is the programmatic entrypoint used by the FastAPI pipeline.
+    
+    Args:
+        data_json_path: Path to the data JSON file
+        sidecar_json_path: Path to the sidecar JSON file
+        template_path: Optional custom template path
+        output_path: Optional custom output path
+        source_path: SharePoint source path (direct parameter, preferred over src_dst.txt)
+        processed_url: SharePoint processed URL (direct parameter, preferred over src_dst.txt)
     """
 
     data_path = Path(data_json_path)
@@ -190,8 +200,11 @@ def generate_template_csv_file(
     if confidence_overall is None:
         confidence_overall = _get_by_path(sidecar, "confidence")
 
-    # Source/destination from src_dst.txt exclusively
-    srcdst = _read_src_dst_hint(sidecar_path)
+    # Source/destination: prefer direct parameters if BOTH are provided, otherwise fallback to src_dst.txt
+    if source_path and processed_url:
+        srcdst = {"source_path": source_path, "processed_url": processed_url}
+    else:
+        srcdst = _read_src_dst_hint(sidecar_path)
 
     header_context: Dict[str, Any] = {}
     if isinstance(data, dict):

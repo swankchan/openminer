@@ -1091,25 +1091,15 @@ class SharePointService:
             # Handle name conflicts: "rename" auto-appends a suffix if destination file exists
             "@microsoft.graph.conflictBehavior": "rename",
         }
+        target_name = Path(str(src)).name  # Default to source filename
         if dest_name is not None and str(dest_name).strip():
-            payload["name"] = Path(str(dest_name)).name
+            target_name = Path(str(dest_name)).name
+            payload["name"] = target_name
 
-        # Execute the move operation
-        moved = self._graph_request(
-            "PATCH",
-            f"/drives/{src_drive_id}/items/{src_item_id}",
-            json_body=payload,
-        )
-
-        # After successful move, write src_dst.txt with the ACTUAL filename from the response
-        # (which may differ from the original if there was a name conflict)
+        # PRE-WRITE src_dst.txt with EXPECTED paths BEFORE the move operation
+        # This ensures CSV generation has valid paths even if move fails
         try:
-            from config import SIDECAR_OUTPUT_DIR, BASE_DIR, CSV_OUTPUT_DIR  # type: ignore
-            
-            # Get the actual filename from the move response (may have been auto-renamed)
-            actual_name = str(moved.get("name") or "") if isinstance(moved, dict) else ""
-            if not actual_name:
-                actual_name = (Path(str(dest_name)).name if (dest_name and str(dest_name).strip()) else Path(str(src)).name)
+            from config import SIDECAR_OUTPUT_DIR, BASE_DIR, CSV_OUTPUT_DIR, DEBUG  # type: ignore
             
             # Extract the SharePoint prefix from source path (e.g., /sites/APOCR/Shared Documents)
             src_lower = src.lower()
@@ -1122,22 +1112,19 @@ class SharePointService:
                         dst_to_use = f"{prefix.rstrip('/')}/{dst.lstrip('/')}"
                     break
             
-            processed_file_url = f"{dst_to_use.rstrip('/')}/{actual_name}"
+            expected_processed_url = f"{dst_to_use.rstrip('/')}/{target_name}"
+            
+            if DEBUG:
+                print(f"[MOVE_ITEM] PRE-WRITE: source={src}, expected_dest={expected_processed_url}")
 
             # Candidate locations to persist the src_dst hint
             candidates = []
             if SIDECAR_OUTPUT_DIR:
                 candidates.append(Path(SIDECAR_OUTPUT_DIR))
-            try:
-                candidates.append(Path(BASE_DIR) / "outputs")
-            except Exception:
-                pass
-            try:
-                candidates.append(Path(CSV_OUTPUT_DIR))
-            except Exception:
-                pass
+            candidates.append(Path(BASE_DIR) / "outputs")
+            candidates.append(Path(CSV_OUTPUT_DIR))
 
-            payload_txt = json.dumps({"source_path": src, "processed_url": processed_file_url}, ensure_ascii=False, indent=2)
+            payload_txt = json.dumps({"source_path": src, "processed_url": expected_processed_url}, ensure_ascii=False, indent=2)
             for d in candidates:
                 try:
                     if not d:
@@ -1145,17 +1132,79 @@ class SharePointService:
                     d.mkdir(parents=True, exist_ok=True)
                     tmp_path = d / "src_dst.txt"
                     tmp_path.write_text(payload_txt, encoding="utf-8")
-                    try:
-                        from config import DEBUG  # type: ignore
-                        if DEBUG:
-                            print(f"sharepoint_service: wrote src_dst to {tmp_path} (actual name: {actual_name})")
-                    except Exception:
-                        pass
-                except Exception:
+                    if DEBUG:
+                        print(f"[MOVE_ITEM] PRE-WRITE: wrote src_dst.txt to {tmp_path}")
+                    break  # Success - stop after first write
+                except Exception as we:
+                    if DEBUG:
+                        print(f"[MOVE_ITEM] PRE-WRITE: failed to write to {d}: {we}")
                     continue
-        except Exception:
-            # non-fatal; continue
-            pass
+                    
+        except Exception as e:
+            try:
+                from config import DEBUG  # type: ignore
+                if DEBUG:
+                    print(f"[MOVE_ITEM] PRE-WRITE ERROR: {e}")
+            except Exception:
+                pass
+
+        # Execute the move operation
+        moved = self._graph_request(
+            "PATCH",
+            f"/drives/{src_drive_id}/items/{src_item_id}",
+            json_body=payload,
+        )
+
+        # After successful move, UPDATE src_dst.txt with the ACTUAL filename from the response
+        # (which may differ from the original if there was a name conflict and auto-rename)
+        try:
+            from config import SIDECAR_OUTPUT_DIR, BASE_DIR, CSV_OUTPUT_DIR, DEBUG  # type: ignore
+            
+            # Get the actual filename from the move response (may have been auto-renamed)
+            actual_name = str(moved.get("name") or "") if isinstance(moved, dict) else ""
+            if not actual_name:
+                actual_name = target_name
+            
+            if DEBUG:
+                print(f"[MOVE_ITEM] POST-MOVE: actual_name={actual_name}")
+            
+            # Only update if actual name differs from expected
+            if actual_name != target_name:
+                actual_processed_url = f"{dst_to_use.rstrip('/')}/{actual_name}"
+                
+                if DEBUG:
+                    print(f"[MOVE_ITEM] POST-MOVE: updating src_dst.txt with actual_processed_url={actual_processed_url}")
+
+                # Update with actual path
+                candidates = []
+                if SIDECAR_OUTPUT_DIR:
+                    candidates.append(Path(SIDECAR_OUTPUT_DIR))
+                candidates.append(Path(BASE_DIR) / "outputs")
+                candidates.append(Path(CSV_OUTPUT_DIR))
+
+                payload_txt = json.dumps({"source_path": src, "processed_url": actual_processed_url}, ensure_ascii=False, indent=2)
+                for d in candidates:
+                    try:
+                        if not d:
+                            continue
+                        d.mkdir(parents=True, exist_ok=True)
+                        tmp_path = d / "src_dst.txt"
+                        tmp_path.write_text(payload_txt, encoding="utf-8")
+                        if DEBUG:
+                            print(f"[MOVE_ITEM] POST-MOVE: updated src_dst.txt to {tmp_path}")
+                        break
+                    except Exception as we:
+                        if DEBUG:
+                            print(f"[MOVE_ITEM] POST-MOVE: failed to update {d}: {we}")
+                        continue
+                
+        except Exception as e:
+            try:
+                from config import DEBUG  # type: ignore
+                if DEBUG:
+                    print(f"[MOVE_ITEM] POST-MOVE ERROR: {e}")
+            except Exception:
+                pass
 
         return {"ok": True, "source": src, "dest_folder": dst, "item": moved}
 

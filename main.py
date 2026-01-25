@@ -268,8 +268,8 @@ async def _sharepoint_auto_ingest_loop(app: FastAPI, stop_event: asyncio.Event, 
                     ),
                 )
 
-                # After processing, move the input PDF to processed folder and write src_dst.txt
-                # Compute target processed folder path upfront; move input PDF best-effort
+                # After processing, move the input PDF to processed folder
+                # Pre-write src_dst.txt with expected paths BEFORE move to ensure CSV has valid data
                 dest_folder = None
                 if processed_folder and processed_folder != "/":
                     subdir = _sp_relative_subdir(inbox_folder, server_rel)
@@ -277,6 +277,49 @@ async def _sharepoint_auto_ingest_loop(app: FastAPI, stop_event: asyncio.Event, 
                     if subdir:
                         d = f"{d}/{subdir}"
                     dest_folder = d
+                    
+                    # PRE-WRITE src_dst.txt before move_item (in case move fails)
+                    try:
+                        from config import SIDECAR_OUTPUT_DIR, CSV_OUTPUT_DIR
+                        import json as _json
+                        
+                        # Build expected processed path
+                        _expected_name = Path(server_rel).name
+                        # Add full SharePoint prefix to destination if needed
+                        _dst_full = d
+                        _src_lower = server_rel.lower()
+                        for _marker in ["/shared documents/", "/documents/"]:
+                            _idx = _src_lower.find(_marker)
+                            if _idx >= 0:
+                                _prefix = server_rel[: _idx + len(_marker) - 1]
+                                if not d.lower().startswith(_prefix.lower()):
+                                    _dst_full = f"{_prefix.rstrip('/')}/{d.lstrip('/')}"
+                                break
+                        _expected_url = f"{_dst_full.rstrip('/')}/{_expected_name}"
+                        
+                        # Write to candidate locations
+                        _candidates = []
+                        if SIDECAR_OUTPUT_DIR:
+                            _candidates.append(Path(SIDECAR_OUTPUT_DIR))
+                        _candidates.append(BASE_DIR / "outputs")
+                        _candidates.append(CSV_OUTPUT_DIR)
+                        
+                        _payload = _json.dumps({"source_path": server_rel, "processed_url": _expected_url}, ensure_ascii=False, indent=2)
+                        for _cdir in _candidates:
+                            try:
+                                if _cdir:
+                                    _cdir.mkdir(parents=True, exist_ok=True)
+                                    (_cdir / "src_dst.txt").write_text(_payload, encoding="utf-8")
+                                    if DEBUG:
+                                        print(f"[SP_AUTO] pre-wrote src_dst.txt: source={server_rel}, dest={_expected_url}")
+                                    break
+                            except Exception:
+                                continue
+                    except Exception as _pre_e:
+                        if DEBUG:
+                            print(f"[SP_AUTO] pre-write src_dst.txt failed: {_pre_e}")
+                    
+                    # Now attempt the actual move
                     try:
                         await asyncio.to_thread(sharepoint_service.ensure_folder_path, d)
                         await asyncio.to_thread(sharepoint_service.move_item, server_rel, d)
@@ -349,11 +392,11 @@ async def _sharepoint_auto_ingest_loop(app: FastAPI, stop_event: asyncio.Event, 
                                 if DEBUG:
                                     print(f"[SP_AUTO] upload template CSV failed ({server_rel}): {ue}")
 
-                        # Regenerate CSV after upload to ensure it used the latest src_dst.txt
+                        # Regenerate CSV after upload to ensure it uses the latest src_dst.txt
                         # and re-upload the regenerated CSV so SharePoint has the final values.
                         try:
                             if template_csv_path and Path(str(template_csv_path)).exists():
-                                # Re-generate using same inputs (this will re-read src_dst.txt)
+                                # Re-generate using same inputs (reads from src_dst.txt)
                                 try:
                                     from services.jsoncsv_app import generate_template_csv_file
 
