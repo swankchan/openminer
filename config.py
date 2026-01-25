@@ -324,6 +324,10 @@ GENERATE_SEARCHABLE_PDF = _env_bool("GENERATE_SEARCHABLE_PDF", True)
 # These control how `services/ocr_app.py` is invoked from the main workflow.
 OCR_LANGUAGE = _env_str("OCR_LANGUAGE", "eng")
 OCR_ROTATE_PAGES = _env_bool("OCR_ROTATE_PAGES", True)
+# Rotation confidence threshold (0.0-15.0). Lower = more aggressive rotation.
+# Default ocrmypdf threshold is ~14. Set to 5.0 to allow rotation for pages with lower confidence.
+_ocr_rotate_threshold_raw = _env_str("OCR_ROTATE_THRESHOLD", "").strip()
+OCR_ROTATE_THRESHOLD: float | None = float(_ocr_rotate_threshold_raw) if _ocr_rotate_threshold_raw else None
 OCR_DESKEW = _env_bool("OCR_DESKEW", False)
 OCR_JOBS = _env_int("OCR_JOBS", 1)
 OCR_OPTIMIZE = _env_int("OCR_OPTIMIZE", 0)

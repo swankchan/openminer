@@ -117,6 +117,7 @@ def ocr_to_searchable_pdf(
     redo: bool = False,
     deskew: bool = False,
     rotate: bool = False,
+    rotate_threshold: Optional[float] = None,
     jobs: int = 1,
     optimize: int = 0,
     image_dpi: Optional[int] = None,
@@ -125,6 +126,12 @@ def ocr_to_searchable_pdf(
     """Run OCRmyPDF to produce a searchable (text-layer) PDF.
 
     This is the single supported searchable-PDF generator in this repo.
+    
+    Args:
+        rotate_threshold: Confidence threshold for page rotation (0.0-15.0).
+                          Lower values = more aggressive rotation.
+                          Default ocrmypdf threshold is ~14.
+                          Set to 5.0 or lower for pages with low confidence scores.
     """
 
     input_path = Path(input_pdf).expanduser().resolve()
@@ -148,19 +155,28 @@ def ocr_to_searchable_pdf(
     # Use redo=True to force OCR.
     skip_text = not bool(redo)
 
-    ocrmypdf.ocr(
-        input_file=str(input_path),
-        output_file=str(output_path),
-        language=str(language or "eng"),
-        skip_text=skip_text,
-        force_ocr=bool(redo),
-        deskew=bool(deskew),
-        rotate_pages=bool(rotate),
-        optimize=int(optimize),
-        jobs=max(1, int(jobs)),
-        image_dpi=int(image_dpi) if image_dpi is not None else None,
-        progress_bar=False,
-    )
+    # Build kwargs for ocrmypdf.ocr()
+    ocr_kwargs = {
+        "input_file": str(input_path),
+        "output_file": str(output_path),
+        "language": str(language or "eng"),
+        "skip_text": skip_text,
+        "force_ocr": bool(redo),
+        "deskew": bool(deskew),
+        "rotate_pages": bool(rotate),
+        "optimize": int(optimize),
+        "jobs": max(1, int(jobs)),
+        "progress_bar": False,
+    }
+    
+    if image_dpi is not None:
+        ocr_kwargs["image_dpi"] = int(image_dpi)
+    
+    # Add rotate_pages_threshold if specified (lower = more aggressive rotation)
+    if rotate_threshold is not None:
+        ocr_kwargs["rotate_pages_threshold"] = float(rotate_threshold)
+
+    ocrmypdf.ocr(**ocr_kwargs)
 
     return output_path
 
