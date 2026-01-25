@@ -1,0 +1,1 @@
+cmd /c "set PYTHONIOENCODING=utf-8 && conda activate mineru2.5 && python run.py"

@@ -140,10 +140,7 @@ The app will be available at `http://localhost:8000`.
 - Click "Process"
 
 ### Test Windows Folder
-- Prepare a folder containing PDFs
-- In the UI, click the "Windows Folder" tab
-- Enter a folder path (e.g., `C:\Users\YourName\Documents\PDFs`)
-- Click "Process All PDFs in Folder"
+- It's a network share path for additonal copy of output csv file
 
 ### Test SharePoint (requires setup)
 - Ensure SharePoint environment variables are configured

@@ -1086,6 +1086,19 @@
                             <span><i class="fas fa-rotate"></i> Refresh</span>
                         </button>
                     </div>
+                    <!-- Multi-selection controls -->
+                    <div id="spMultiSelectBar" style="display:none; margin-top:10px; padding:10px 12px; border-radius:10px; background:linear-gradient(135deg, rgba(239,68,68,0.1), rgba(239,68,68,0.05)); border:1px solid rgba(239,68,68,0.2);">
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px;">
+                                <input type="checkbox" id="spSelectAll" onchange="toggleSelectAllSharePoint(this.checked)" style="width:16px; height:16px; cursor:pointer;" />
+                                <span>Select All</span>
+                            </label>
+                            <span id="spSelectedCount" style="font-size:13px; opacity:0.8;">0 selected</span>
+                            <button class="btn" type="button" onclick="deleteSelectedSharePointItems()" style="padding:8px 14px; background:linear-gradient(135deg, #ef4444, #dc2626); margin-left:auto;">
+                                <span><i class="fas fa-trash"></i> Delete Selected</span>
+                            </button>
+                        </div>
+                    </div>
 
                     <div style="display:flex; gap:10px; align-items:center; margin-top: 10px; flex-wrap: wrap;">
                         <input type="file" id="spUploadFiles" multiple style="position:absolute; left:-10000px; width:1px; height:1px; opacity:0;" onchange="onSharePointUploadFilesSelected(event)" />
@@ -2289,8 +2302,9 @@
                 }));
 
                 return `
-                    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-radius:10px; background: rgba(255,255,255,0.55); margin-bottom:8px; cursor:pointer;" onclick="browseSharePoint('${encodeURIComponent(url)}')">
+                    <div class="sp-browse-item" data-payload="${payload}" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-radius:10px; background: rgba(255,255,255,0.55); margin-bottom:8px; cursor:pointer;" onclick="browseSharePoint('${encodeURIComponent(url)}')">
                         <div style="display:flex; align-items:center; gap:10px;">
+                            <input type="checkbox" class="sp-item-checkbox" data-payload="${payload}" onclick="event.stopPropagation(); updateSharePointSelection()" style="width:16px; height:16px; cursor:pointer;" />
                             <i class="fas fa-folder" style="color:#6366f1;"></i>
                             <div style="min-width:0;">
                                 <div style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(name)}</div>
@@ -2328,8 +2342,9 @@
                 if (size !== null) metaParts.push(`<span title="Size">${escapeHtml(formatBytes(size))}</span>`);
                 const meta = metaParts.length ? `<div style="font-size: 11px; opacity: .75; margin-top: 2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${metaParts.join(' • ')}</div>` : '';
                 return `
-                    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-radius:10px; background: rgba(255,255,255,0.55); margin-bottom:8px;">
+                    <div class="sp-browse-item" data-payload="${payload}" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-radius:10px; background: rgba(255,255,255,0.55); margin-bottom:8px;">
                         <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+                            <input type="checkbox" class="sp-item-checkbox" data-payload="${payload}" onclick="event.stopPropagation(); updateSharePointSelection()" style="width:16px; height:16px; cursor:pointer;" />
                             <i class="fas ${icon}" style="color:${color};"></i>
                             <div style="min-width:0;">
                                 <div style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(name)}</div>
@@ -2349,6 +2364,9 @@
             }).join('');
 
             el.innerHTML = folderHtml + fileHtml;
+            
+            // Update multi-selection controls
+            updateSharePointSelection();
         }
 
         function formatBytes(bytes) {
@@ -2553,6 +2571,95 @@
                 await browseSharePoint(spBrowseCurrent || '/');
             } catch (e) {
                 showResult('error', '<i class="fas fa-times-circle"></i> Delete failed: ' + escapeHtml(e.message || String(e)));
+            }
+        }
+
+        // Multi-selection functions for SharePoint browser
+        function updateSharePointSelection() {
+            const checkboxes = document.querySelectorAll('.sp-item-checkbox');
+            const checked = document.querySelectorAll('.sp-item-checkbox:checked');
+            const countEl = document.getElementById('spSelectedCount');
+            const barEl = document.getElementById('spMultiSelectBar');
+            const selectAllEl = document.getElementById('spSelectAll');
+            
+            if (countEl) countEl.textContent = `${checked.length} selected`;
+            if (barEl) barEl.style.display = checkboxes.length > 0 ? 'block' : 'none';
+            if (selectAllEl) selectAllEl.checked = checkboxes.length > 0 && checked.length === checkboxes.length;
+        }
+
+        function toggleSelectAllSharePoint(selectAll) {
+            const checkboxes = document.querySelectorAll('.sp-item-checkbox');
+            checkboxes.forEach(cb => cb.checked = selectAll);
+            updateSharePointSelection();
+        }
+
+        async function deleteSelectedSharePointItems() {
+            const checked = document.querySelectorAll('.sp-item-checkbox:checked');
+            if (checked.length === 0) {
+                showResult('error', '<i class="fas fa-exclamation-circle"></i> No items selected.');
+                return;
+            }
+
+            const items = [];
+            checked.forEach(cb => {
+                const payload = cb.getAttribute('data-payload');
+                if (payload) {
+                    try {
+                        const decoded = decodeURIComponent(payload);
+                        const parsed = JSON.parse(decoded);
+                        items.push(parsed);
+                    } catch (_) {}
+                }
+            });
+
+            if (items.length === 0) return;
+
+            const names = items.map(i => i.name || i.path || 'unknown').join('\n');
+            const ok = confirm(`Delete ${items.length} item(s)?\n\n${names}`);
+            if (!ok) return;
+
+            let successCount = 0;
+            let failCount = 0;
+            const errors = [];
+
+            for (const item of items) {
+                try {
+                    const resp = await fetch('/api/sharepoint/delete', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            path: item.path || '',
+                            drive_id: item.drive_id || '',
+                            item_id: item.item_id || ''
+                        })
+                    });
+                    const data = await resp.json();
+                    if (!resp.ok || !(data && data.ok)) {
+                        failCount++;
+                        errors.push(`${item.name}: ${data.detail || data.error || 'Failed'}`);
+                    } else {
+                        successCount++;
+                    }
+                } catch (e) {
+                    failCount++;
+                    errors.push(`${item.name}: ${e.message || String(e)}`);
+                }
+            }
+
+            // Reset selection
+            const selectAllEl = document.getElementById('spSelectAll');
+            if (selectAllEl) selectAllEl.checked = false;
+
+            // Refresh the list
+            await browseSharePoint(spBrowseCurrent || '/');
+
+            // Show result
+            if (failCount === 0) {
+                showResult('success', `<i class="fas fa-check-circle"></i> Deleted ${successCount} item(s).`);
+            } else if (successCount === 0) {
+                showResult('error', `<i class="fas fa-times-circle"></i> Failed to delete all items.\n${errors.join('\n')}`);
+            } else {
+                showResult('warning', `<i class="fas fa-exclamation-triangle"></i> Deleted ${successCount}, failed ${failCount}.\n${errors.join('\n')}`);
             }
         }
 
