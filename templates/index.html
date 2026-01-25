@@ -925,6 +925,9 @@
             <button class="tab" onclick="switchTab('folder')">
                 <i class="fas fa-folder"></i> Windows Folder
             </button>
+            <button class="tab" onclick="switchTab('logs')">
+                <i class="fas fa-chart-line"></i> Logs
+            </button>
         </div>
 
         <!-- Upload tab -->
@@ -1164,6 +1167,87 @@
             <button class="btn" onclick="saveNetworkShareDir()">
                 <span><i class="fas fa-save"></i> Save Windows folder (output)</span>
             </button>
+        </div>
+
+        <!-- Logs tab -->
+        <div id="logs-tab" class="tab-content">
+            <!-- Statistics Summary -->
+            <div id="logsSummary" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-bottom:20px;">
+                <div style="background:linear-gradient(135deg, rgba(34,197,94,0.15), rgba(34,197,94,0.05)); border:1px solid rgba(34,197,94,0.3); border-radius:12px; padding:16px; text-align:center;">
+                    <div style="font-size:28px; font-weight:700; color:#22c55e;" id="statToday">-</div>
+                    <div style="font-size:12px; opacity:0.8; margin-top:4px;"><i class="fas fa-calendar-day"></i> Today</div>
+                </div>
+                <div style="background:linear-gradient(135deg, rgba(59,130,246,0.15), rgba(59,130,246,0.05)); border:1px solid rgba(59,130,246,0.3); border-radius:12px; padding:16px; text-align:center;">
+                    <div style="font-size:28px; font-weight:700; color:#3b82f6;" id="statMonth">-</div>
+                    <div style="font-size:12px; opacity:0.8; margin-top:4px;"><i class="fas fa-calendar-week"></i> This Month</div>
+                </div>
+                <div style="background:linear-gradient(135deg, rgba(168,85,247,0.15), rgba(168,85,247,0.05)); border:1px solid rgba(168,85,247,0.3); border-radius:12px; padding:16px; text-align:center;">
+                    <div style="font-size:28px; font-weight:700; color:#a855f7;" id="statYear">-</div>
+                    <div style="font-size:12px; opacity:0.8; margin-top:4px;"><i class="fas fa-calendar"></i> This Year</div>
+                </div>
+                <div style="background:linear-gradient(135deg, rgba(249,115,22,0.15), rgba(249,115,22,0.05)); border:1px solid rgba(249,115,22,0.3); border-radius:12px; padding:16px; text-align:center;">
+                    <div style="font-size:28px; font-weight:700; color:#f97316;" id="statAllTime">-</div>
+                    <div style="font-size:12px; opacity:0.8; margin-top:4px;"><i class="fas fa-infinity"></i> All Time</div>
+                </div>
+            </div>
+
+            <!-- Filters -->
+            <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-bottom:16px;">
+                <div class="form-group" style="flex:1; min-width:140px; margin:0;">
+                    <label for="logsDateFrom"><i class="fas fa-calendar-alt"></i> From</label>
+                    <input type="date" id="logsDateFrom" />
+                </div>
+                <div class="form-group" style="flex:1; min-width:140px; margin:0;">
+                    <label for="logsDateTo"><i class="fas fa-calendar-alt"></i> To</label>
+                    <input type="date" id="logsDateTo" />
+                </div>
+                <div class="form-group" style="width:120px; margin:0;">
+                    <label for="logsStatus"><i class="fas fa-filter"></i> Status</label>
+                    <select id="logsStatus" style="padding:10px 12px; border-radius:10px; border:1px solid rgba(0,0,0,0.1); background:rgba(255,255,255,0.8);">
+                        <option value="">All</option>
+                        <option value="success">Success</option>
+                        <option value="failed">Failed</option>
+                    </select>
+                </div>
+                <button class="btn" type="button" onclick="loadLogs()" style="padding:10px 16px;">
+                    <span><i class="fas fa-search"></i> Search</span>
+                </button>
+                <button class="btn" type="button" onclick="refreshLogs()" style="padding:10px 16px;">
+                    <span><i class="fas fa-rotate"></i> Refresh</span>
+                </button>
+            </div>
+
+            <!-- Logs Table -->
+            <div style="overflow-x:auto; border-radius:12px; border:1px solid rgba(0,0,0,0.1);">
+                <table id="logsTable" style="width:100%; border-collapse:collapse; font-size:13px;">
+                    <thead>
+                        <tr style="background:linear-gradient(135deg, rgba(99,102,241,0.1), rgba(99,102,241,0.05));">
+                            <th style="padding:12px 10px; text-align:left; border-bottom:1px solid rgba(0,0,0,0.1);">Time</th>
+                            <th style="padding:12px 10px; text-align:left; border-bottom:1px solid rgba(0,0,0,0.1);">Input File</th>
+                            <th style="padding:12px 10px; text-align:left; border-bottom:1px solid rgba(0,0,0,0.1);">Source Path</th>
+                            <th style="padding:12px 10px; text-align:left; border-bottom:1px solid rgba(0,0,0,0.1);">Output Files</th>
+                            <th style="padding:12px 10px; text-align:center; border-bottom:1px solid rgba(0,0,0,0.1);">Status</th>
+                            <th style="padding:12px 10px; text-align:right; border-bottom:1px solid rgba(0,0,0,0.1);">Time (s)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logsTableBody">
+                        <tr><td colspan="6" style="padding:20px; text-align:center; opacity:0.7;">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            <div id="logsPagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:12px; font-size:13px;">
+                <div id="logsInfo" style="opacity:0.7;">Showing 0 of 0</div>
+                <div style="display:flex; gap:8px;">
+                    <button class="btn" type="button" onclick="logsPagePrev()" id="logsPrevBtn" disabled style="padding:8px 14px; font-size:12px;">
+                        <span><i class="fas fa-chevron-left"></i> Prev</span>
+                    </button>
+                    <button class="btn" type="button" onclick="logsPageNext()" id="logsNextBtn" disabled style="padding:8px 14px; font-size:12px;">
+                        <span>Next <i class="fas fa-chevron-right"></i></span>
+                    </button>
+                </div>
+            </div>
         </div>
 
         <!-- Progress bar -->
@@ -1412,6 +1496,10 @@
                         if (el && !el.value) el.value = d.path;
                     }
                 } catch (_) {}
+            }
+            if (tabName === 'logs') {
+                // Load logs when opening the Logs tab.
+                refreshLogs();
             }
         }
 
@@ -3003,6 +3091,131 @@
 
         function hideResult() {
             document.getElementById('result').style.display = 'none';
+        }
+
+        // ==================== Logs Functions ====================
+        let logsCurrentPage = 0;
+        const logsPageSize = 20;
+        let logsTotalCount = 0;
+
+        async function refreshLogs() {
+            logsCurrentPage = 0;
+            await Promise.all([loadLogsSummary(), loadLogs()]);
+        }
+
+        async function loadLogsSummary() {
+            try {
+                const resp = await fetch('/api/logs/summary');
+                const data = await resp.json();
+                if (resp.ok && data) {
+                    document.getElementById('statToday').textContent = data.today?.total ?? 0;
+                    document.getElementById('statMonth').textContent = data.month?.total ?? 0;
+                    document.getElementById('statYear').textContent = data.year?.total ?? 0;
+                    document.getElementById('statAllTime').textContent = data.all_time?.total ?? 0;
+                }
+            } catch (e) {
+                console.error('Failed to load logs summary:', e);
+            }
+        }
+
+        async function loadLogs() {
+            const dateFrom = document.getElementById('logsDateFrom')?.value || '';
+            const dateTo = document.getElementById('logsDateTo')?.value || '';
+            const status = document.getElementById('logsStatus')?.value || '';
+
+            const params = new URLSearchParams({
+                limit: logsPageSize,
+                offset: logsCurrentPage * logsPageSize,
+            });
+            if (dateFrom) params.append('date_from', dateFrom);
+            if (dateTo) params.append('date_to', dateTo);
+            if (status) params.append('status', status);
+
+            const tbody = document.getElementById('logsTableBody');
+            tbody.innerHTML = '<tr><td colspan="6" style="padding:20px; text-align:center; opacity:0.7;">Loading...</td></tr>';
+
+            try {
+                const resp = await fetch('/api/logs?' + params.toString());
+                const data = await resp.json();
+
+                if (!resp.ok) {
+                    throw new Error(data.detail || 'Failed to load logs');
+                }
+
+                logsTotalCount = data.total || 0;
+                const items = data.items || [];
+
+                if (items.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="padding:20px; text-align:center; opacity:0.7;">No records found</td></tr>';
+                } else {
+                    tbody.innerHTML = items.map(log => renderLogRow(log)).join('');
+                }
+
+                updateLogsPagination();
+            } catch (e) {
+                console.error('Failed to load logs:', e);
+                tbody.innerHTML = `<tr><td colspan="6" style="padding:20px; text-align:center; color:#ef4444;">${escapeHtml(e.message)}</td></tr>`;
+            }
+        }
+
+        function renderLogRow(log) {
+            const timestamp = log.timestamp ? new Date(log.timestamp).toLocaleString() : '-';
+            const inputFile = log.input_filename || '-';
+            const sourcePath = log.source_path || '-';
+            
+            const outputs = [];
+            if (log.output_searchable_pdf) outputs.push(`<span title="Searchable PDF"><i class="fas fa-file-pdf" style="color:#ef4444;"></i> ${escapeHtml(log.output_searchable_pdf)}</span>`);
+            if (log.output_json) outputs.push(`<span title="JSON"><i class="fas fa-file-code" style="color:#3b82f6;"></i> ${escapeHtml(log.output_json)}</span>`);
+            if (log.output_csv) outputs.push(`<span title="CSV"><i class="fas fa-file-csv" style="color:#22c55e;"></i> ${escapeHtml(log.output_csv)}</span>`);
+            const outputHtml = outputs.length > 0 ? outputs.join('<br>') : '-';
+
+            const statusColor = log.status === 'success' ? '#22c55e' : '#ef4444';
+            const statusIcon = log.status === 'success' ? 'fa-check-circle' : 'fa-times-circle';
+            const statusHtml = `<span style="color:${statusColor};"><i class="fas ${statusIcon}"></i> ${escapeHtml(log.status || 'unknown')}</span>`;
+
+            const timeSeconds = log.processing_time_ms ? (log.processing_time_ms / 1000).toFixed(1) : '-';
+
+            const rowBg = log.status === 'failed' ? 'background:rgba(239,68,68,0.05);' : '';
+
+            return `
+                <tr style="${rowBg}">
+                    <td style="padding:10px; border-bottom:1px solid rgba(0,0,0,0.05); white-space:nowrap;">${escapeHtml(timestamp)}</td>
+                    <td style="padding:10px; border-bottom:1px solid rgba(0,0,0,0.05); max-width:200px; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(inputFile)}">${escapeHtml(inputFile)}</td>
+                    <td style="padding:10px; border-bottom:1px solid rgba(0,0,0,0.05); max-width:250px; overflow:hidden; text-overflow:ellipsis; font-size:11px; opacity:0.8;" title="${escapeHtml(sourcePath)}">${escapeHtml(sourcePath)}</td>
+                    <td style="padding:10px; border-bottom:1px solid rgba(0,0,0,0.05); font-size:11px;">${outputHtml}</td>
+                    <td style="padding:10px; border-bottom:1px solid rgba(0,0,0,0.05); text-align:center;">${statusHtml}</td>
+                    <td style="padding:10px; border-bottom:1px solid rgba(0,0,0,0.05); text-align:right;">${timeSeconds}</td>
+                </tr>
+                ${log.error_message ? `<tr style="background:rgba(239,68,68,0.03);"><td colspan="6" style="padding:8px 10px; font-size:11px; color:#ef4444; border-bottom:1px solid rgba(0,0,0,0.05);"><i class="fas fa-exclamation-triangle"></i> ${escapeHtml(log.error_message)}</td></tr>` : ''}
+            `;
+        }
+
+        function updateLogsPagination() {
+            const start = logsCurrentPage * logsPageSize + 1;
+            const end = Math.min((logsCurrentPage + 1) * logsPageSize, logsTotalCount);
+            const infoEl = document.getElementById('logsInfo');
+            if (infoEl) {
+                infoEl.textContent = logsTotalCount > 0 ? `Showing ${start}-${end} of ${logsTotalCount}` : 'No records';
+            }
+
+            const prevBtn = document.getElementById('logsPrevBtn');
+            const nextBtn = document.getElementById('logsNextBtn');
+            if (prevBtn) prevBtn.disabled = logsCurrentPage === 0;
+            if (nextBtn) nextBtn.disabled = (logsCurrentPage + 1) * logsPageSize >= logsTotalCount;
+        }
+
+        function logsPagePrev() {
+            if (logsCurrentPage > 0) {
+                logsCurrentPage--;
+                loadLogs();
+            }
+        }
+
+        function logsPageNext() {
+            if ((logsCurrentPage + 1) * logsPageSize < logsTotalCount) {
+                logsCurrentPage++;
+                loadLogs();
+            }
         }
     </script>
 </body>

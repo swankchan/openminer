@@ -22,6 +22,7 @@ from services.azure_ai_service import AzureAIService
 from services.sharepoint_service import SharePointService
 from services.folder_service import FolderService
 from services.ocr_app import ocr_to_searchable_pdf
+from services.logging_service import get_logging_service
 from config import (
     UPLOAD_DIR,
     JSON_OUTPUT_DIR,
@@ -242,6 +243,11 @@ async def _sharepoint_auto_ingest_loop(app: FastAPI, stop_event: asyncio.Event, 
                 continue
             in_progress.add(server_rel)
 
+            # Track processing time for logging
+            import time as _time
+            _processing_start = _time.time()
+            _file_size = it.get("size") or 0
+
             try:
                 # Download
                 local_pdf = await sharepoint_service.download_file(server_rel, None)
@@ -392,9 +398,42 @@ async def _sharepoint_auto_ingest_loop(app: FastAPI, stop_event: asyncio.Event, 
                     except Exception:
                         pass
 
+                # Log successful processing
+                try:
+                    _processing_time = int((_time.time() - _processing_start) * 1000)
+                    _logging_svc = get_logging_service()
+                    _logging_svc.log_processing(
+                        input_filename=base_name,
+                        source_path=server_rel,
+                        processed_path=dest_folder or "",
+                        output_searchable_pdf=Path(str(searchable_pdf_path)).name if searchable_pdf_path else None,
+                        output_json=Path(str(result.get("output_path", ""))).name if result.get("output_path") else None,
+                        output_csv=Path(str(template_csv_path)).name if template_csv_path else None,
+                        status="success",
+                        processing_time_ms=_processing_time,
+                        file_size_bytes=_file_size,
+                    )
+                except Exception as log_e:
+                    if DEBUG:
+                        print(f"[SP_AUTO] logging failed: {log_e}")
+
             except Exception as e:
                 if DEBUG:
                     print(f"[SP_AUTO] processing failed ({server_rel}): {e}")
+                # Log failed processing
+                try:
+                    _processing_time = int((_time.time() - _processing_start) * 1000)
+                    _logging_svc = get_logging_service()
+                    _logging_svc.log_processing(
+                        input_filename=base_name if 'base_name' in dir() else Path(server_rel).name,
+                        source_path=server_rel,
+                        status="failed",
+                        error_message=str(e)[:500],
+                        processing_time_ms=_processing_time,
+                        file_size_bytes=_file_size,
+                    )
+                except Exception:
+                    pass
             finally:
                 in_progress.discard(server_rel)
 
@@ -1141,6 +1180,67 @@ async def set_prompt_settings(payload: Dict[str, Any] = Body(...)):
     load_dotenv(dotenv_path=str(env_path), override=True)
 
     return {"status": "ok"}
+
+
+# ==================== Logging API ====================
+
+@app.get("/api/logs")
+async def get_logs(
+    limit: int = 50,
+    offset: int = 0,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    status: Optional[str] = None,
+):
+    """Get processing logs with pagination and optional filtering."""
+    try:
+        logging_service = get_logging_service()
+        return logging_service.get_logs(
+            limit=limit,
+            offset=offset,
+            date_from=date_from,
+            date_to=date_to,
+            status=status,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/logs/stats")
+async def get_logs_stats(period: str = "daily"):
+    """Get processing statistics for a given period (daily/monthly/yearly)."""
+    if period not in ("daily", "monthly", "yearly"):
+        raise HTTPException(status_code=400, detail="period must be daily, monthly, or yearly")
+    try:
+        logging_service = get_logging_service()
+        return logging_service.get_stats(period=period)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/logs/summary")
+async def get_logs_summary():
+    """Get summary statistics: today, this month, this year, all time."""
+    try:
+        logging_service = get_logging_service()
+        return logging_service.get_summary()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/logs/{log_id}")
+async def get_log_by_id(log_id: int):
+    """Get a single log record by ID."""
+    try:
+        logging_service = get_logging_service()
+        log = logging_service.get_log_by_id(log_id)
+        if log is None:
+            raise HTTPException(status_code=404, detail="Log not found")
+        return log
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/runtime_status")
