@@ -24,3 +24,12 @@ tests/
 !example.pdf
 regenerate_log.txt
 
+# Database - avoid overwriting server data
+processing_logs.db
+*.db
+
+# Test scripts
+test_*.py
+
+# SharePoint downloads cache
+sharepoint_downloads/
