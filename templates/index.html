@@ -3159,7 +3159,8 @@
         }
 
         function renderLogRow(log) {
-            const timestamp = log.timestamp ? new Date(log.timestamp).toLocaleString() : '-';
+            // Display timestamp directly (already in server's local timezone, e.g., HK GMT+8)
+            const timestamp = log.timestamp || '-';
             const inputFile = log.input_filename || '-';
             const sourcePath = log.source_path || '-';
             

@@ -85,16 +85,20 @@ class LoggingService:
         Returns:
             The ID of the inserted log record.
         """
+        # Use server's local time instead of SQLite's UTC CURRENT_TIMESTAMP
+        local_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
         with self._get_connection() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO processing_logs (
-                    input_filename, source_path, processed_path,
+                    timestamp, input_filename, source_path, processed_path,
                     output_searchable_pdf, output_json, output_csv,
                     status, error_message, processing_time_ms, file_size_bytes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    local_timestamp,
                     input_filename,
                     source_path,
                     processed_path,
