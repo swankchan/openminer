@@ -370,6 +370,35 @@ async def _sharepoint_auto_ingest_loop(app: FastAPI, stop_event: asyncio.Event, 
                             )
                             # Expose CSV path in the result for UI and APIs
                             result["template_csv_path"] = str(template_csv_path)
+                            
+                            # If configured, copy an additional copy of the CSV to the network share path.
+                            try:
+                                if NETWORK_SHARE_DIR:
+                                    import shutil
+
+                                    try:
+                                        dest_dir = Path(NETWORK_SHARE_DIR)
+                                    except Exception:
+                                        dest_dir = None
+
+                                    if dest_dir:
+                                        try:
+                                            dest_dir.mkdir(parents=True, exist_ok=True)
+                                        except Exception:
+                                            # ignore creation errors; copy may still work if mounted
+                                            pass
+
+                                        try:
+                                            dest = dest_dir / Path(template_csv_path).name
+                                            shutil.copy2(str(template_csv_path), str(dest))
+                                            result["template_csv_network_path"] = str(dest)
+                                            if DEBUG:
+                                                print(f"[SP_AUTO] Copied template CSV to network share: {dest}")
+                                        except Exception as ns_e:
+                                            if DEBUG:
+                                                print(f"[SP_AUTO] Failed to copy CSV to network share ({NETWORK_SHARE_DIR}): {ns_e}")
+                            except Exception:
+                                pass
                     except Exception as e:
                         if DEBUG:
                             print(f"[SP_AUTO] template CSV generation failed ({server_rel}): {e}")
@@ -418,6 +447,30 @@ async def _sharepoint_auto_ingest_loop(app: FastAPI, stop_event: asyncio.Event, 
                                     except Exception as reup_e:
                                         if DEBUG:
                                             print(f"[SP_AUTO] re-upload regenerated CSV failed ({server_rel}): {reup_e}")
+                                    
+                                    # Also copy regenerated CSV to network share
+                                    try:
+                                        if NETWORK_SHARE_DIR:
+                                            import shutil
+                                            try:
+                                                dest_dir = Path(NETWORK_SHARE_DIR)
+                                                if dest_dir:
+                                                    try:
+                                                        dest_dir.mkdir(parents=True, exist_ok=True)
+                                                    except Exception:
+                                                        pass
+                                                    try:
+                                                        dest = dest_dir / Path(regenerated_path).name
+                                                        shutil.copy2(str(regenerated_path), str(dest))
+                                                        if DEBUG:
+                                                            print(f"[SP_AUTO] Copied regenerated CSV to network share: {dest}")
+                                                    except Exception as ns_e:
+                                                        if DEBUG:
+                                                            print(f"[SP_AUTO] Failed to copy regenerated CSV to network share: {ns_e}")
+                                            except Exception:
+                                                pass
+                                    except Exception:
+                                        pass
                                 except Exception as regen_e:
                                     if DEBUG:
                                         print(f"[SP_AUTO] regenerate-after-upload failed ({server_rel}): {regen_e}")
