@@ -31,6 +31,44 @@ from config import (
 load_dotenv()
 
 
+def _read_dotenv_raw_value(env_path: Path, key: str) -> Optional[str]:
+    """Best-effort: read a KEY=value from the raw .env text.
+    
+    This is intentionally more lenient than python-dotenv parsing so we can recover
+    from invalid quoting (e.g., unescaped '"' inside a quoted prompt value).
+    """
+    try:
+        if not env_path.exists():
+            return None
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            m = re.match(r"^\s*" + re.escape(key) + r"\s*=\s*(.*)\s*$", line)
+            if not m:
+                continue
+            return m.group(1)
+    except Exception:
+        return None
+    return None
+
+
+def _lenient_unquote_env_value(raw: Optional[str]) -> str:
+    """Remove surrounding quotes from a value."""
+    if raw is None:
+        return ""
+    s = str(raw).strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
+        s = s[1:-1]
+    return s
+
+
+def _decode_env_newlines(value: str) -> str:
+    """Decode \\n sequences to actual newlines."""
+    if value is None:
+        return ""
+    s = str(value)
+    # Tolerate legacy values that were accidentally double-escaped.
+    return s.replace("\\\\n", "\n").replace("\\n", "\n")
+
+
 class AzureAIService:
     """AI service integration (supports Azure OpenAI and Ollama)."""
     
@@ -267,10 +305,16 @@ class AzureAIService:
             custom_system_prompt, custom_user_prompt = self._load_custom_prompts(system_override=system_prompt_override, user_override=user_prompt_override)
 
             # Prepare the system prompt (priority: frontend override -> .env -> file -> default).
-            if custom_system_prompt:
+            # Use .env value if available, even if it's an empty string (but not None)
+            if custom_system_prompt is not None:
                 system_prompt = custom_system_prompt
                 if APP_DEBUG:
-                    print(f"[JSON_GENERATION]   Using custom system_prompt (length: {len(system_prompt)} chars)")
+                    source = "frontend override" if system_prompt_override is not None else ".env"
+                    print(f"[JSON_GENERATION]   Using {source} system_prompt (length: {len(system_prompt)} chars)")
+                    if APP_DEBUG and len(system_prompt) > 0:
+                        # Show first 200 chars for debugging
+                        preview = system_prompt[:200].replace("\n", "\\n")
+                        print(f"[JSON_GENERATION]   System prompt preview: {preview}...")
             else:
                 # Output is fixed to JSON: the default prompt must force JSON to avoid markdown/tables.
                 system_prompt = (
@@ -278,7 +322,10 @@ class AzureAIService:
                     "If a value is unknown, use null. Use the exact keys requested by the user prompt."
                 )
                 if APP_DEBUG:
-                    print("[JSON_GENERATION]   Using default system_prompt")
+                    print("[JSON_GENERATION]   Using default system_prompt (no .env value found)")
+                    # Debug: check what os.getenv returns
+                    env_val = os.getenv("AZURE_OPENAI_SYSTEM_PROMPT")
+                    print(f"[JSON_GENERATION]   DEBUG: os.getenv('AZURE_OPENAI_SYSTEM_PROMPT') = {repr(env_val)}")
 
             # Prepare the user prompt (priority: frontend override -> .env -> file -> auto-generated).
             if custom_user_prompt is not None:
@@ -538,34 +585,100 @@ class AzureAIService:
     
     def _load_custom_prompts(self, system_override: Optional[str] = None, user_override: Optional[str] = None) -> tuple[Optional[str], Optional[str]]:
         """
-        Load prompts: precedence -- frontend overrides -> .env vars -> AZURE_OPENAI_CUSTOM_PROMPT fallback.
-        Note: PROMPT FILE usage removed per configuration; csv_extraction.txt is no longer used.
+        Load prompts: precedence -- frontend overrides -> direct .env file read -> os.getenv -> config -> AZURE_OPENAI_CUSTOM_PROMPT fallback.
+        Note: Direct .env file read is used to handle complex values with embedded quotes that python-dotenv may fail to parse.
         """
-        # Frontend overrides take highest precedence
-        if system_override is not None or user_override is not None:
-            return system_override, user_override
+        env_path = BASE_DIR / ".env"
+        system_prompt = None
+        user_prompt = None
+        
+        # Priority 1: Try reading directly from .env file (handles complex quoting issues)
+        # This is the same method used in main.py's get_prompt_settings endpoint
+        if env_path.exists():
+            try:
+                from dotenv import dotenv_values
+                values = dict(dotenv_values(env_path))
+                system_prompt_raw = _lenient_unquote_env_value(values.get("AZURE_OPENAI_SYSTEM_PROMPT") or "")
+                user_prompt_raw = _lenient_unquote_env_value(values.get("AZURE_OPENAI_USER_PROMPT") or "")
+                
+                # If dotenv parsing yields empty, fall back to raw-line parsing
+                if not system_prompt_raw:
+                    system_prompt_raw = _read_dotenv_raw_value(env_path, "AZURE_OPENAI_SYSTEM_PROMPT")
+                    if system_prompt_raw:
+                        system_prompt_raw = _lenient_unquote_env_value(system_prompt_raw)
+                
+                if not user_prompt_raw:
+                    user_prompt_raw = _read_dotenv_raw_value(env_path, "AZURE_OPENAI_USER_PROMPT")
+                    if user_prompt_raw:
+                        user_prompt_raw = _lenient_unquote_env_value(user_prompt_raw)
+                
+                # Decode newlines and handle escaping
+                if system_prompt_raw:
+                    system_prompt = _decode_env_newlines(system_prompt_raw.replace("\\\"", '"').replace("\\\\", "\\"))
+                    if not system_prompt.strip():
+                        system_prompt = None
+                
+                if user_prompt_raw:
+                    user_prompt = _decode_env_newlines(user_prompt_raw.replace("\\\"", '"').replace("\\\\", "\\"))
+                    if not user_prompt.strip():
+                        user_prompt = None
+            except Exception as e:
+                if APP_DEBUG:
+                    print(f"[JSON_GENERATION]   Failed to read .env directly: {e}")
+        
+        # Priority 2: Fallback to os.getenv (for runtime updates via load_dotenv)
+        if not system_prompt:
+            system_prompt_raw = os.getenv("AZURE_OPENAI_SYSTEM_PROMPT")
+            if system_prompt_raw:
+                system_prompt = _decode_env_newlines(system_prompt_raw.strip().strip('"').strip("'"))
+                if not system_prompt.strip():
+                    system_prompt = None
+        
+        if not user_prompt:
+            user_prompt_raw = os.getenv("AZURE_OPENAI_USER_PROMPT")
+            if user_prompt_raw:
+                user_prompt = _decode_env_newlines(user_prompt_raw.strip().strip('"').strip("'"))
+                if not user_prompt.strip():
+                    user_prompt = None
+        
+        # Priority 3: Fallback to config values (loaded at startup)
+        if not system_prompt and AZURE_OPENAI_SYSTEM_PROMPT:
+            system_prompt = AZURE_OPENAI_SYSTEM_PROMPT
+        
+        if not user_prompt and AZURE_OPENAI_USER_PROMPT:
+            user_prompt = AZURE_OPENAI_USER_PROMPT
 
-        # Read from process environment so updates via load_dotenv(override=True) take effect
-        # without requiring an app restart. Store newlines in .env as literal "\\n" sequences.
-        system_prompt = os.getenv("AZURE_OPENAI_SYSTEM_PROMPT") or None
-        user_prompt = os.getenv("AZURE_OPENAI_USER_PROMPT") or None
-
-        if system_prompt:
-            system_prompt = system_prompt.replace("\\\\n", "\n").replace("\\n", "\n")
-        if user_prompt:
-            user_prompt = user_prompt.replace("\\\\n", "\n").replace("\\n", "\n")
-
-        # Fallback to legacy single PROMPT text if user_prompt not provided
+        # Priority 4: Fallback to legacy single PROMPT text if user_prompt not provided
         if not user_prompt and AZURE_OPENAI_CUSTOM_PROMPT:
             user_prompt = AZURE_OPENAI_CUSTOM_PROMPT.replace("\\n", "\n")
 
-        if APP_DEBUG:
-            if system_prompt:
-                print(f"[JSON_GENERATION]   Using .env AZURE_OPENAI_SYSTEM_PROMPT (length: {len(system_prompt)})")
-            if user_prompt:
-                print(f"[JSON_GENERATION]   Using .env AZURE_OPENAI_USER_PROMPT (length: {len(user_prompt)})")
+        # Frontend overrides take highest precedence (only if explicitly provided, not None)
+        # If override is None, use .env value; if override is empty string "", use empty string
+        final_system = system_override if system_override is not None else system_prompt
+        final_user = user_override if user_override is not None else user_prompt
 
-        return system_prompt, user_prompt
+        if APP_DEBUG:
+            if final_system is not None:
+                source = "frontend override" if system_override is not None else ".env"
+                print(f"[JSON_GENERATION]   Using {source} AZURE_OPENAI_SYSTEM_PROMPT (length: {len(final_system)})")
+                if len(final_system) > 0:
+                    preview = final_system[:200].replace("\n", "\\n")
+                    print(f"[JSON_GENERATION]   System prompt preview: {preview}...")
+            else:
+                print("[JSON_GENERATION]   No system prompt found (neither override nor .env)")
+                # Debug: show what we tried to read
+                if env_path.exists():
+                    raw_val = _read_dotenv_raw_value(env_path, "AZURE_OPENAI_SYSTEM_PROMPT")
+                    print(f"[JSON_GENERATION]   DEBUG: Raw value from .env file = {repr(raw_val[:100] if raw_val else None)}...")
+                print(f"[JSON_GENERATION]   DEBUG: os.getenv('AZURE_OPENAI_SYSTEM_PROMPT') = {repr(os.getenv('AZURE_OPENAI_SYSTEM_PROMPT'))}")
+                print(f"[JSON_GENERATION]   DEBUG: AZURE_OPENAI_SYSTEM_PROMPT from config = {repr(AZURE_OPENAI_SYSTEM_PROMPT)}")
+            if final_user is not None:
+                source = "frontend override" if user_override is not None else ".env"
+                print(f"[JSON_GENERATION]   Using {source} AZURE_OPENAI_USER_PROMPT (length: {len(final_user)})")
+            else:
+                print("[JSON_GENERATION]   No user prompt found (neither override nor .env)")
+
+        return final_system, final_user
     
     def _load_custom_prompt(self) -> Optional[str]:
         """
