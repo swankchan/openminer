@@ -598,9 +598,15 @@ def _write_dotenv_updates(env_path: Path, updates: Dict[str, str]) -> None:
             comment = comment_match.group(0).rstrip("\r\n")
 
         raw_value = updates.get(key, "")
-        # Quote if value contains spaces or a '#'
-        needs_quotes = (" " in raw_value) or ("\t" in raw_value) or ("#" in raw_value)
-        value_str = f"\"{raw_value.replace('\\"', '\\\\"')}\"" if needs_quotes else raw_value
+        # Quote if value contains spaces, tabs, '#', newlines, or quotes
+        needs_quotes = (" " in raw_value) or ("\t" in raw_value) or ("#" in raw_value) or ("\n" in raw_value) or ('"' in raw_value)
+        
+        if needs_quotes:
+            # Properly escape the value for .env file format
+            escaped_value = _escape_env_value(raw_value)
+            value_str = f'"{escaped_value}"'
+        else:
+            value_str = raw_value
 
         newline = "\n"
         if line.endswith("\r\n"):
@@ -612,8 +618,13 @@ def _write_dotenv_updates(env_path: Path, updates: Dict[str, str]) -> None:
         if key in found:
             continue
         raw_value = updates.get(key, "")
-        needs_quotes = (" " in raw_value) or ("\t" in raw_value) or ("#" in raw_value)
-        value_str = f"\"{raw_value.replace('\\"', '\\\\"')}\"" if needs_quotes else raw_value
+        needs_quotes = (" " in raw_value) or ("\t" in raw_value) or ("#" in raw_value) or ("\n" in raw_value) or ('"' in raw_value)
+        
+        if needs_quotes:
+            escaped_value = _escape_env_value(raw_value)
+            value_str = f'"{escaped_value}"'
+        else:
+            value_str = raw_value
         out_lines.append(f"{key}={value_str}\n")
 
     env_path.write_text("".join(out_lines), encoding="utf-8")
@@ -662,6 +673,23 @@ def _encode_env_newlines(value: str) -> str:
         return ""
     s = str(value).replace("\r\n", "\n")
     return s.replace("\n", "\\n")
+
+
+def _escape_env_value(value: str) -> str:
+    """
+    Escape a value for writing to .env file.
+    When the value is wrapped in double quotes, internal quotes must be escaped as \"
+    and backslashes must be escaped as \\
+    """
+    if not value:
+        return value
+    
+    # Simple approach: escape all backslashes first, then escape all quotes
+    # This ensures that \" becomes \\\" which is correct for .env format
+    # and standalone " becomes \"
+    escaped = value.replace('\\', '\\\\').replace('"', '\\"')
+    
+    return escaped
 
 
 def _read_dotenv_raw_value(env_path: Path, key: str) -> Optional[str]:
