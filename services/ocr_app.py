@@ -155,6 +155,17 @@ def ocr_to_searchable_pdf(
     # Use redo=True to force OCR.
     skip_text = not bool(redo)
 
+    # Check if input is an image file (jpg, jpeg, png)
+    input_extension = input_path.suffix.lower()
+    is_image = input_extension in (".jpg", ".jpeg", ".png")
+    
+    # For image files, set a default DPI if not specified
+    # ocrmypdf requires image_dpi for image inputs to avoid "resolution not credible" errors
+    final_image_dpi = image_dpi
+    if is_image and final_image_dpi is None:
+        # Default to 300 DPI for images (common scanning resolution)
+        final_image_dpi = 300
+
     # Build kwargs for ocrmypdf.ocr()
     ocr_kwargs = {
         "input_file": str(input_path),
@@ -169,8 +180,9 @@ def ocr_to_searchable_pdf(
         "progress_bar": False,
     }
     
-    if image_dpi is not None:
-        ocr_kwargs["image_dpi"] = int(image_dpi)
+    # Always set image_dpi for image files, or if explicitly provided
+    if final_image_dpi is not None:
+        ocr_kwargs["image_dpi"] = int(final_image_dpi)
     
     # Add rotate_pages_threshold if specified (lower = more aggressive rotation)
     if rotate_threshold is not None:

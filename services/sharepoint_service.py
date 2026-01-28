@@ -479,7 +479,9 @@ class SharePointService:
                         "last_modified_date_time": child.get("lastModifiedDateTime"),
                     })
                 else:
-                    is_pdf = bool(name and str(name).lower().endswith(".pdf"))
+                    # Support PDF and image files
+                    supported_extensions = (".pdf", ".jpg", ".jpeg", ".png")
+                    is_pdf_or_image = bool(name and any(str(name).lower().endswith(ext) for ext in supported_extensions))
                     file_items.append({
                         "name": name,
                         "server_relative_url": server_rel,
@@ -798,11 +800,13 @@ class SharePointService:
                     })
                 else:
                     if include_files:
-                        is_pdf = bool(name and str(name).lower().endswith(".pdf"))
+                        # Support PDF and image files
+                        supported_extensions = (".pdf", ".jpg", ".jpeg", ".png")
+                        is_pdf_or_image = bool(name and any(str(name).lower().endswith(ext) for ext in supported_extensions))
                         files.append({
                             "name": name,
                             "path": child_server_rel,
-                            "is_pdf": is_pdf,
+                            "is_pdf": is_pdf_or_image,
                         })
 
             folders.sort(key=lambda x: (str(x.get("name") or "").lower()))
@@ -1028,7 +1032,9 @@ class SharePointService:
                     stack.append((d_id, str(child.get("id") or "")))
                     continue
 
-                if name.lower().endswith(".pdf") and server_rel:
+                # Support PDF and image files (jpg, jpeg, png)
+                supported_extensions = (".pdf", ".jpg", ".jpeg", ".png")
+                if name and any(name.lower().endswith(ext) for ext in supported_extensions) and server_rel:
                     results.append({
                         "name": name,
                         "server_relative_url": server_rel,

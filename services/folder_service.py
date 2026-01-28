@@ -9,13 +9,13 @@ class FolderService:
     
     def get_pdf_files(self, folder_path: str) -> List[Path]:
         """
-        Get all PDF files from a Windows folder.
+        Get all PDF and image files from a Windows folder.
         
         Args:
             folder_path: Folder path
         
         Returns:
-            List of PDF file paths
+            List of PDF and image file paths (PDF, JPG, PNG)
         """
         try:
             folder = Path(folder_path)
@@ -26,10 +26,15 @@ class FolderService:
             if not folder.is_dir():
                 raise ValueError(f"Path is not a folder: {folder_path}")
             
-            # Recursively search for all PDF files.
+            # Recursively search for all PDF and image files.
             pdf_files = list(folder.rglob("*.pdf"))
+            jpg_files = list(folder.rglob("*.jpg"))
+            jpeg_files = list(folder.rglob("*.jpeg"))
+            png_files = list(folder.rglob("*.png"))
             
-            return pdf_files
+            all_files = pdf_files + jpg_files + jpeg_files + png_files
+            
+            return all_files
             
         except Exception as e:
             raise Exception(f"Error while reading folder: {str(e)}")

@@ -1565,23 +1565,24 @@ async def upload_pdf(
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"處理 JSON 文件時發生錯誤: {str(e)}")
         
-        elif file_extension == ".pdf":
-            # 如果是 PDF 文件，使用現有流程
+        elif file_extension == ".pdf" or file_extension in (".jpg", ".jpeg", ".png"):
+            # 如果是 PDF 或圖片文件，使用現有流程（ocrmypdf 和 MinerU 都支持圖片）
+            file_type = "image" if file_extension in (".jpg", ".jpeg", ".png") else "pdf"
             if DEBUG:
-                print(f"[PDF_UPLOAD] 檢測到 PDF 文件，使用標準處理流程: {file.filename}")
+                print(f"[{file_type.upper()}_UPLOAD] 檢測到 {file_type} 文件，使用標準處理流程: {file.filename}")
             
             # 使用提供的 task_id 或生成新的
             if not task_id:
                 task_id = str(uuid.uuid4())
                 if DEBUG:
-                    print(f"[PDF_UPLOAD] 未提供 task_id，生成新的: {task_id}")
+                    print(f"[{file_type.upper()}_UPLOAD] 未提供 task_id，生成新的: {task_id}")
             else:
                 if DEBUG:
-                    print(f"[PDF_UPLOAD] 使用提供的 task_id: {task_id}")
+                    print(f"[{file_type.upper()}_UPLOAD] 使用提供的 task_id: {task_id}")
             
             pq: ProcessingQueue = app.state.processing_queue
             result = await pq.enqueue(
-                f"PDF:{base_name}",
+                f"{file_type.upper()}:{base_name}",
                 task_id,
                 lambda: process_pdf_file(
                     file_path=file_path,
@@ -1599,8 +1600,8 @@ async def upload_pdf(
                 "status": "success",
                 "file_id": file_id,
                 "filename": base_name,
-                "message": "PDF 處理完成",
-                "file_type": "pdf",
+                "message": f"{file_type.upper()} 處理完成",
+                "file_type": file_type,
                 "needs_ocr": result.get("needs_ocr"),
                 "json_available": result.get("json_available", False),
                 "generate_template_csv": bool(GENERATE_TEMPLATE_CSV)
@@ -1634,7 +1635,7 @@ async def upload_pdf(
         else:
             raise HTTPException(
                 status_code=400, 
-                detail=f"不支援的文件類型: {file_extension}。請上傳 PDF 或 JSON 文件。"
+                detail=f"不支援的文件類型: {file_extension}。請上傳 PDF、圖片（JPG/PNG）或 JSON 文件。"
             )
             
     except HTTPException:
@@ -1941,7 +1942,7 @@ async def process_folder(
         
         return JSONResponse(content={
             "status": "success",
-            "message": f"已處理 {len(results)} 個 PDF 檔案",
+            "message": f"已處理 {len(results)} 個檔案（PDF/圖片）",
             "generate_template_csv": bool(GENERATE_TEMPLATE_CSV),
             "results": results
         })
@@ -2026,13 +2027,20 @@ async def process_pdf_file(
             bool(GENERATE_TEMPLATE_CSV) if generate_template_csv_override is None else bool(generate_template_csv_override)
         )
         
-        # 步驟 1: 檢查 PDF 是否需要 OCR（除非強制 OCR）
+        # 步驟 1: 檢查文件是否需要 OCR（除非強制 OCR）
+        # 圖片文件（jpg, png）總是需要的 OCR
+        file_extension = file_path.suffix.lower()
+        is_image = file_extension in (".jpg", ".jpeg", ".png")
+        
         if task_id:
             await progress_manager.send_progress(task_id, 10, "檢查檔案…", "check_format")
         
-        if FORCE_OCR:
+        if FORCE_OCR or is_image:
             if DEBUG:
-                print(f"[FORCE_OCR] 強制執行 OCR，跳過檢查: {file_path}")
+                if is_image:
+                    print(f"[IMAGE_PROCESS] 圖片文件，強制執行 OCR: {file_path}")
+                else:
+                    print(f"[FORCE_OCR] 強制執行 OCR，跳過檢查: {file_path}")
             needs_ocr = True
         else:
             if task_id:
