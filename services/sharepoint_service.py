@@ -1159,50 +1159,89 @@ class SharePointService:
         # (which may differ from the original if there was a name conflict and auto-rename)
         try:
             from config import SIDECAR_OUTPUT_DIR, BASE_DIR, CSV_OUTPUT_DIR, DEBUG  # type: ignore
+            import json as _json_module
             
             # Get the actual filename from the move response (may have been auto-renamed)
-            actual_name = str(moved.get("name") or "") if isinstance(moved, dict) else ""
+            # Graph API returns the moved item with 'name' field
+            actual_name = ""
+            if isinstance(moved, dict):
+                actual_name = str(moved.get("name") or "")
+                if DEBUG:
+                    print(f"[MOVE_ITEM] POST-MOVE: moved response keys: {list(moved.keys())}")
+                    print(f"[MOVE_ITEM] POST-MOVE: moved response name field: {repr(moved.get('name'))}")
+            
+            # If name is not in response, try to get it from the item ID by fetching the item again
+            if not actual_name:
+                try:
+                    moved_item_id = moved.get("id") if isinstance(moved, dict) else None
+                    if moved_item_id:
+                        # Fetch the moved item to get its actual name
+                        fetched_item = self._graph_request(
+                            "GET",
+                            f"/drives/{src_drive_id}/items/{moved_item_id}",
+                            params={"$select": "name"}
+                        )
+                        if isinstance(fetched_item, dict):
+                            actual_name = str(fetched_item.get("name") or "")
+                            if DEBUG and actual_name:
+                                print(f"[MOVE_ITEM] POST-MOVE: fetched actual_name from item: {actual_name}")
+                except Exception as fetch_e:
+                    if DEBUG:
+                        print(f"[MOVE_ITEM] POST-MOVE: failed to fetch item name: {fetch_e}")
+            
             if not actual_name:
                 actual_name = target_name
+                if DEBUG:
+                    print(f"[MOVE_ITEM] POST-MOVE: WARNING - no name found, using target_name={target_name}")
             
             if DEBUG:
-                print(f"[MOVE_ITEM] POST-MOVE: actual_name={actual_name}")
+                print(f"[MOVE_ITEM] POST-MOVE: actual_name={actual_name}, target_name={target_name}")
             
-            # Only update if actual name differs from expected
-            if actual_name != target_name:
-                actual_processed_url = f"{dst_to_use.rstrip('/')}/{actual_name}"
-                
-                if DEBUG:
-                    print(f"[MOVE_ITEM] POST-MOVE: updating src_dst.txt with actual_processed_url={actual_processed_url}")
+            # Always update src_dst.txt with the ACTUAL filename from the response
+            # This ensures CSV uses the correct filename even if file was auto-renamed
+            actual_processed_url = f"{dst_to_use.rstrip('/')}/{actual_name}"
+            
+            if DEBUG:
+                if actual_name != target_name:
+                    print(f"[MOVE_ITEM] POST-MOVE: ✓ file was renamed ({target_name} -> {actual_name})")
+                print(f"[MOVE_ITEM] POST-MOVE: updating src_dst.txt with processed_url={actual_processed_url}")
 
-                # Update with actual path
-                candidates = []
-                if SIDECAR_OUTPUT_DIR:
-                    candidates.append(Path(SIDECAR_OUTPUT_DIR))
-                candidates.append(Path(BASE_DIR) / "outputs")
-                candidates.append(Path(CSV_OUTPUT_DIR))
+            # Update with actual path (always, to ensure we have the correct filename)
+            candidates = []
+            if SIDECAR_OUTPUT_DIR:
+                candidates.append(Path(SIDECAR_OUTPUT_DIR))
+            candidates.append(Path(BASE_DIR) / "outputs")
+            candidates.append(Path(CSV_OUTPUT_DIR))
 
-                payload_txt = json.dumps({"source_path": src, "processed_url": actual_processed_url}, ensure_ascii=False, indent=2)
-                for d in candidates:
-                    try:
-                        if not d:
-                            continue
-                        d.mkdir(parents=True, exist_ok=True)
-                        tmp_path = d / "src_dst.txt"
-                        tmp_path.write_text(payload_txt, encoding="utf-8")
-                        if DEBUG:
-                            print(f"[MOVE_ITEM] POST-MOVE: updated src_dst.txt to {tmp_path}")
-                        break
-                    except Exception as we:
-                        if DEBUG:
-                            print(f"[MOVE_ITEM] POST-MOVE: failed to update {d}: {we}")
+            payload_txt = _json_module.dumps({"source_path": src, "processed_url": actual_processed_url}, ensure_ascii=False, indent=2)
+            updated_count = 0
+            for d in candidates:
+                try:
+                    if not d:
                         continue
+                    d.mkdir(parents=True, exist_ok=True)
+                    tmp_path = d / "src_dst.txt"
+                    tmp_path.write_text(payload_txt, encoding="utf-8")
+                    updated_count += 1
+                    if DEBUG:
+                        print(f"[MOVE_ITEM] POST-MOVE: ✓ updated src_dst.txt to {tmp_path}")
+                        print(f"[MOVE_ITEM] POST-MOVE:   content: {payload_txt[:200]}...")
+                    # Don't break - update all candidate locations
+                except Exception as we:
+                    if DEBUG:
+                        print(f"[MOVE_ITEM] POST-MOVE: ✗ failed to update {d}: {we}")
+                    continue
+            
+            if DEBUG:
+                print(f"[MOVE_ITEM] POST-MOVE: updated {updated_count} src_dst.txt file(s)")
                 
         except Exception as e:
             try:
                 from config import DEBUG  # type: ignore
                 if DEBUG:
+                    import traceback
                     print(f"[MOVE_ITEM] POST-MOVE ERROR: {e}")
+                    traceback.print_exc()
             except Exception:
                 pass
 

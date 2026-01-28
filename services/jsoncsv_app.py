@@ -12,7 +12,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from config import BASE_DIR, JSON_OUTPUT_DIR, CSV_OUTPUT_DIR
+from config import BASE_DIR, JSON_OUTPUT_DIR, CSV_OUTPUT_DIR, SHAREPOINT_SITE_URL
 
 
 _PLACEHOLDER_RE = re.compile(r"\[([^\[\]]+)\]")
@@ -125,6 +125,58 @@ def _write_csv_rows(path: Path, rows: Iterable[List[str]]) -> None:
             writer.writerow(row)
 
 
+def _build_full_sharepoint_url(relative_path: str) -> str:
+    """
+    Build full SharePoint URL from relative path.
+    
+    Args:
+        relative_path: SharePoint relative path (e.g., "/sites/APOCR/Shared Documents/...")
+    
+    Returns:
+        Full URL (e.g., "https://jebsengroup.sharepoint.com/sites/APOCR/Shared Documents/...")
+        or original path if SHAREPOINT_SITE_URL is not configured or path is already a full URL
+    """
+    if not relative_path:
+        return ""
+    
+    # If already a full URL (starts with http:// or https://), return as-is
+    if relative_path.startswith(("http://", "https://")):
+        return relative_path
+    
+    # Get SharePoint site URL from config
+    site_url = SHAREPOINT_SITE_URL or ""
+    if not site_url:
+        return relative_path
+    
+    # Remove trailing slash from site URL if present
+    site_url = site_url.rstrip("/")
+    
+    # Remove leading slash from relative path if present
+    relative_path = relative_path.lstrip("/")
+    
+    # If relative_path starts with "sites/", check if it matches the site URL's site path
+    # For example, if site_url is "https://jebsengroup.sharepoint.com/sites/APOCR"
+    # and relative_path is "sites/APOCR/Shared Documents/...", we should remove the "sites/APOCR" prefix
+    if relative_path.startswith("sites/"):
+        # Extract site path from site_url (e.g., "sites/APOCR" from "https://...sharepoint.com/sites/APOCR")
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(site_url)
+            site_path = parsed.path.strip("/")  # e.g., "sites/APOCR"
+            
+            # If relative_path starts with the same site_path, remove it
+            if site_path and relative_path.startswith(site_path + "/"):
+                relative_path = relative_path[len(site_path) + 1:]  # Remove "sites/APOCR/"
+            elif relative_path.startswith(site_path):
+                relative_path = relative_path[len(site_path):]  # Remove "sites/APOCR"
+        except Exception:
+            # If parsing fails, just use the relative_path as-is
+            pass
+    
+    # Combine: site_url + "/" + relative_path
+    return f"{site_url}/{relative_path}"
+
+
 def _read_src_dst_hint(sidecar_path: Path) -> Optional[Dict[str, str]]:
     """Read src/dst hint from src_dst.txt near the sidecar or common locations.
 
@@ -141,7 +193,14 @@ def _read_src_dst_hint(sidecar_path: Path) -> Optional[Dict[str, str]]:
     except Exception:
         pass
     try:
-        # 3) Common outputs folder under project
+        # 3) CSV output dir (where CSV files are written)
+        from config import CSV_OUTPUT_DIR  # type: ignore
+        if CSV_OUTPUT_DIR:
+            candidates.append(Path(CSV_OUTPUT_DIR) / "src_dst.txt")
+    except Exception:
+        pass
+    try:
+        # 4) Common outputs folder under project
         candidates.append(BASE_DIR / "outputs" / "src_dst.txt")
     except Exception:
         pass
@@ -211,11 +270,14 @@ def generate_template_csv_file(
         header_context.update(data)
 
     header_context["confidence"] = confidence_overall
-    header_context["SourceURL"] = (srcdst or {}).get("source_path", "")
-    header_context["ProcessedURL"] = (srcdst or {}).get("processed_url", "")
+    # Build full SharePoint URLs by prepending SHAREPOINT_SITE_URL
+    source_path = (srcdst or {}).get("source_path", "")
+    processed_path = (srcdst or {}).get("processed_url", "")
+    header_context["SourceURL"] = _build_full_sharepoint_url(source_path)
+    header_context["ProcessedURL"] = _build_full_sharepoint_url(processed_path)
     # Derive [OU] from grandparent folder of source_path (third-from-end path component).
     try:
-        src_path_val = (srcdst or {}).get("source_path", "") or ""
+        src_path_val = source_path or ""
         ou_val = ""
         if src_path_val:
             parts = [p for p in src_path_val.split("/") if p]
@@ -244,9 +306,10 @@ def generate_template_csv_file(
         if not processed_url and isinstance(sidecar, dict):
             processed_url = sidecar.get("ProcessedURL") or ""
         # Only overwrite ProcessedURL if sidecar provides a non-empty value;
-        # otherwise preserve the value from src_dst.txt (set in line 202).
+        # otherwise preserve the value from src_dst.txt (set above).
+        # Build full SharePoint URL for processed_url
         if processed_url:
-            header_context["ProcessedURL"] = processed_url
+            header_context["ProcessedURL"] = _build_full_sharepoint_url(processed_url)
         header_context["ProcessedFolder"] = processed_folder
         header_context["ProcessedFilename"] = processed_filename
     except Exception:
@@ -323,11 +386,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         header_context.update(data)
 
     header_context["confidence"] = confidence_overall
-    header_context["SourceURL"] = (srcdst or {}).get("source_path", "")
-    header_context["ProcessedURL"] = (srcdst or {}).get("processed_url", "")
+    # Build full SharePoint URLs by prepending SHAREPOINT_SITE_URL
+    source_path = (srcdst or {}).get("source_path", "")
+    processed_path = (srcdst or {}).get("processed_url", "")
+    header_context["SourceURL"] = _build_full_sharepoint_url(source_path)
+    header_context["ProcessedURL"] = _build_full_sharepoint_url(processed_path)
     # Derive OU from grandparent folder of source_path (third-from-end path component).
     try:
-        src_path_val = (srcdst or {}).get("source_path", "") or ""
+        src_path_val = source_path or ""
         ou_val = ""
         if src_path_val:
             parts = [p for p in src_path_val.split("/") if p]

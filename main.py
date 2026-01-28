@@ -321,9 +321,16 @@ async def _sharepoint_auto_ingest_loop(app: FastAPI, stop_event: asyncio.Event, 
                             print(f"[SP_AUTO] pre-write src_dst.txt failed: {_pre_e}")
                     
                     # Now attempt the actual move
+                    move_result = None
                     try:
                         await asyncio.to_thread(sharepoint_service.ensure_folder_path, d)
-                        await asyncio.to_thread(sharepoint_service.move_item, server_rel, d)
+                        move_result = await asyncio.to_thread(sharepoint_service.move_item, server_rel, d)
+                        # move_result contains the actual moved item with the real filename (may be renamed)
+                        if DEBUG and move_result:
+                            moved_item = move_result.get("item", {})
+                            actual_name = moved_item.get("name") if isinstance(moved_item, dict) else None
+                            if actual_name:
+                                print(f"[SP_AUTO] move completed, actual filename: {actual_name}")
                     except Exception as me:
                         if DEBUG:
                             print(f"[SP_AUTO] move failed ({server_rel}): {me}")
@@ -426,7 +433,51 @@ async def _sharepoint_auto_ingest_loop(app: FastAPI, stop_event: asyncio.Event, 
                         # and re-upload the regenerated CSV so SharePoint has the final values.
                         try:
                             if template_csv_path and Path(str(template_csv_path)).exists():
-                                # Re-generate using same inputs (reads from src_dst.txt)
+                                # Update src_dst.txt with actual filename from move_result if available
+                                if move_result and isinstance(move_result, dict):
+                                    moved_item = move_result.get("item", {})
+                                    if isinstance(moved_item, dict):
+                                        actual_name = moved_item.get("name")
+                                        if actual_name:
+                                            try:
+                                                from config import SIDECAR_OUTPUT_DIR, CSV_OUTPUT_DIR
+                                                import json as _json
+                                                
+                                                # Build actual processed URL with the real filename
+                                                _actual_dst_full = d
+                                                _src_lower = server_rel.lower()
+                                                for _marker in ["/shared documents/", "/documents/"]:
+                                                    _idx = _src_lower.find(_marker)
+                                                    if _idx >= 0:
+                                                        _prefix = server_rel[: _idx + len(_marker) - 1]
+                                                        if not d.lower().startswith(_prefix.lower()):
+                                                            _actual_dst_full = f"{_prefix.rstrip('/')}/{d.lstrip('/')}"
+                                                        break
+                                                _actual_processed_url = f"{_actual_dst_full.rstrip('/')}/{actual_name}"
+                                                
+                                                # Update src_dst.txt with actual filename
+                                                _candidates = []
+                                                if SIDECAR_OUTPUT_DIR:
+                                                    _candidates.append(Path(SIDECAR_OUTPUT_DIR))
+                                                _candidates.append(BASE_DIR / "outputs")
+                                                _candidates.append(CSV_OUTPUT_DIR)
+                                                
+                                                _actual_payload = _json.dumps({"source_path": server_rel, "processed_url": _actual_processed_url}, ensure_ascii=False, indent=2)
+                                                for _cdir in _candidates:
+                                                    try:
+                                                        if _cdir:
+                                                            _cdir.mkdir(parents=True, exist_ok=True)
+                                                            (_cdir / "src_dst.txt").write_text(_actual_payload, encoding="utf-8")
+                                                            if DEBUG:
+                                                                print(f"[SP_AUTO] updated src_dst.txt with actual filename: {actual_name}")
+                                                            break
+                                                    except Exception:
+                                                        continue
+                                            except Exception as _update_e:
+                                                if DEBUG:
+                                                    print(f"[SP_AUTO] failed to update src_dst.txt with actual filename: {_update_e}")
+                                
+                                # Re-generate using same inputs (reads from src_dst.txt, which now has the actual filename)
                                 try:
                                     from services.jsoncsv_app import generate_template_csv_file
 
