@@ -479,14 +479,15 @@ class SharePointService:
                         "last_modified_date_time": child.get("lastModifiedDateTime"),
                     })
                 else:
-                    is_pdf = bool(name and str(name).lower().endswith(".pdf"))
+                    # Support PDF and image files (no separate variable to avoid NameError)
+                    supported_ext = (".pdf", ".jpg", ".jpeg", ".png")
                     file_items.append({
                         "name": name,
                         "server_relative_url": server_rel,
                         "web_url": web_url,
                         "drive_id": drive_id,
                         "item_id": child_id,
-                        "is_pdf": is_pdf_or_image,
+                        "is_pdf": bool(name and any(str(name).lower().endswith(ext) for ext in supported_ext)),
                         "size": child.get("size"),
                         "created_date_time": child.get("createdDateTime"),
                         "last_modified_date_time": child.get("lastModifiedDateTime"),
