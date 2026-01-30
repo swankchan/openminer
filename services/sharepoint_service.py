@@ -479,16 +479,14 @@ class SharePointService:
                         "last_modified_date_time": child.get("lastModifiedDateTime"),
                     })
                 else:
-                    # Support PDF and image files
-                    supported_extensions = (".pdf", ".jpg", ".jpeg", ".png")
-                    is_pdf_or_image = bool(name and any(str(name).lower().endswith(ext) for ext in supported_extensions))
+                    is_pdf = bool(name and str(name).lower().endswith(".pdf"))
                     file_items.append({
                         "name": name,
                         "server_relative_url": server_rel,
                         "web_url": web_url,
                         "drive_id": drive_id,
                         "item_id": child_id,
-                        "is_pdf": is_pdf,
+                        "is_pdf": is_pdf_or_image,
                         "size": child.get("size"),
                         "created_date_time": child.get("createdDateTime"),
                         "last_modified_date_time": child.get("lastModifiedDateTime"),
@@ -800,13 +798,11 @@ class SharePointService:
                     })
                 else:
                     if include_files:
-                        # Support PDF and image files
-                        supported_extensions = (".pdf", ".jpg", ".jpeg", ".png")
-                        is_pdf_or_image = bool(name and any(str(name).lower().endswith(ext) for ext in supported_extensions))
+                        is_pdf = bool(name and str(name).lower().endswith(".pdf"))
                         files.append({
                             "name": name,
                             "path": child_server_rel,
-                            "is_pdf": is_pdf_or_image,
+                            "is_pdf": is_pdf,
                         })
 
             folders.sort(key=lambda x: (str(x.get("name") or "").lower()))
@@ -1032,9 +1028,7 @@ class SharePointService:
                     stack.append((d_id, str(child.get("id") or "")))
                     continue
 
-                # Support PDF and image files (jpg, jpeg, png)
-                supported_extensions = (".pdf", ".jpg", ".jpeg", ".png")
-                if name and any(name.lower().endswith(ext) for ext in supported_extensions) and server_rel:
+                if name.lower().endswith(".pdf") and server_rel:
                     results.append({
                         "name": name,
                         "server_relative_url": server_rel,
